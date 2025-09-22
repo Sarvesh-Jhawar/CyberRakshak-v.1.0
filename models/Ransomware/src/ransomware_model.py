@@ -130,8 +130,16 @@ print("ROC-AUC:", roc)
 # Save model
 # -----------------------------------------------------
 model_file = MODELS_DIR / "ransomware_rf_model.pkl"
+numeric_cols_file = MODELS_DIR / "ransomware_numeric_cols.pkl"
+categorical_cols_file = MODELS_DIR / "ransomware_categorical_cols.pkl"
+
 joblib.dump(model, model_file)
+joblib.dump(numeric_cols, numeric_cols_file)
+joblib.dump(categorical_cols, categorical_cols_file)
+
 print(f"\nModel saved to: {model_file}")
+print(f"Numeric columns saved to: {numeric_cols_file}")
+print(f"Categorical columns saved to: {categorical_cols_file}")
 
 # -----------------------------------------------------
 # Load model for new input analysis

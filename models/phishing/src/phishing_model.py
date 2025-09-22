@@ -109,19 +109,17 @@ def extract_text_features(subject, body):
 # Combine URL + text features
 # -----------------------------------------------------
 def extract_combined_features(row):
+    # This function now expects a single 'url' field from the row Series/dict
     feats = {}
-    if 'PHISHING URL' in row and pd.notna(row['PHISHING URL']):
-        feats.update(extract_url_features(row['PHISHING URL']))
-    if 'SAFE URL' in row and pd.notna(row['SAFE URL']):
-        feats.update(extract_url_features(row['SAFE URL']))
+    url = row.get('url', '')
+    if url and pd.notna(url):
+        feats.update(extract_url_features(url))
     feats.update(extract_text_features(row.get('subject', ''), row.get('body', '')))
     return pd.Series(feats)
 
 # -----------------------------------------------------
 # Prepare dataset
 # -----------------------------------------------------
-# Drop unnecessary unnamed columns
-data = data.loc[:, ~data.columns.str.contains('^Unnamed')]
 
 # Ensure 'label' column exists
 if 'label' not in data.columns:
@@ -130,6 +128,13 @@ if 'label' not in data.columns:
 # Drop rows with missing labels
 data = data.dropna(subset=['label'])
 data['label'] = data['label'].astype(int)
+
+# --- UNIFY URLS to match API ---
+# Create a single 'url' column from the two separate ones.
+data['url'] = data['PHISHING URL'].fillna(data['SAFE URL'])
+# Now we can drop the old columns and any rows that still don't have a url
+data = data.drop(columns=['PHISHING URL', 'SAFE URL'], errors='ignore')
+data = data.dropna(subset=['url'])
 
 
 # Apply feature extraction
@@ -181,7 +186,7 @@ ANALYSIS_FEATURES = joblib.load(features_file)
 # Analyze new input (URL, email, SMS)
 # -----------------------------------------------------
 def analyze_input(row):
-    feats = extract_combined_features(row)
+    feats = extract_combined_features(pd.Series(row))
     feat_array = np.array([feats.get(f, 0) for f in ANALYSIS_FEATURES]).reshape(1, -1)
     pred_prob = ANALYSIS_MODEL.predict_proba(feat_array)[0][1]
     pred_label = int(pred_prob >= 0.5)
@@ -191,7 +196,7 @@ def analyze_input(row):
         "receiver": row.get("receiver", ""),
         "subject": row.get("subject", ""),
         "body": row.get("body", ""),
-        "urls": [row.get("PHISHING URL", ""), row.get("SAFE URL", "")],
+        "urls": [row.get("url", "")],
         "model_prediction": "phishing" if pred_label else "legitimate",
         "prediction_confidence": round(float(pred_prob), 4),
         "feature_contributions": feats.to_dict(),
@@ -209,11 +214,11 @@ if __name__ == "__main__":
     test_cases = [
         {
             "name": "Test URL 1",
-            "input": {"PHISHING URL": "http://secure-login-account-verification.com"}
+            "input": {"url": "http://secure-login-account-verification.com"}
         },
         {
             "name": "Test URL 2 (Safe URL)",
-            "input": {"SAFE URL": "https://www.google.com"}
+            "input": {"url": "https://www.google.com"}
         },
         {
             "name": "Test Email 1",
@@ -222,7 +227,7 @@ if __name__ == "__main__":
                 "receiver": "user@gmail.com",
                 "subject": "Verify Your Account",
                 "body": "Click the link to secure your account: http://paypal-secure.com",
-                "PHISHING URL": "http://paypal-secure.com"
+                "url": "http://paypal-secure.com"
             }
         },
         {
@@ -232,7 +237,7 @@ if __name__ == "__main__":
                 "receiver": "dev@gmail.com",
                 "subject": "Your GitHub report",
                 "body": "Your weekly report is ready: https://github.com",
-                "SAFE URL": "https://github.com"
+                "url": "https://github.com"
             }
         },
         {
@@ -240,7 +245,7 @@ if __name__ == "__main__":
             "input": {
                 "sender": "BankAlert",
                 "body": "Your OTP is 123456. Verify here: http://tinyurl.com/otp",
-                "PHISHING URL": "http://tinyurl.com/otp"
+                "url": "http://tinyurl.com/otp"
             }
         },
         {
@@ -248,7 +253,49 @@ if __name__ == "__main__":
             "input": {
                 "sender": "BankAlert",
                 "body": "Your OTP is 123456. Check your account at https://www.bank.com",
-                "SAFE URL": "https://www.bank.com"
+                "url": "https://www.bank.com"
+            }
+        },
+        {
+            "name": "Test URL 3 (Phishing - Fake Banking)",
+            "input": {
+                "url": "http://bankofamerica-login-secure-update.com"
+            }
+        },
+        {
+            "name": "Test URL 4 (Legitimate News Site)",
+            "input": {
+                "url": "https://www.bbc.com/news"
+            }
+        },
+        {
+            "name": "Test SMS 3 (Phishing - Gift Scam)",
+            "input": {
+                "sender": "AmazonGift",
+                "body": "Congratulations! You've won a $500 gift card. Claim now: http://amz-rewards-claim.com",
+                "url": "http://amz-rewards-claim.com"
+            }
+        },
+        {
+            "name": "Test SMS 4 (Safe Delivery Update)",
+            "input": {
+                "sender": "FedEx",
+                "body": "Your package has been shipped. Track here: https://www.fedex.com/track",
+                "url": "https://www.fedex.com/track"
+            }
+        },
+        {
+            "name": "Test URL 5 (Phishing - Fake Social Media)",
+            "input": {
+                "url": "http://instagram-login-reset-password.com"
+            }
+        },
+        {
+            "name": "Test SMS 5 (Safe Bank Notification)",
+            "input": {
+                "sender": "HDFCBank",
+                "body": "Your account balance is updated. Login securely: https://www.hdfcbank.com",
+                "url": "https://www.hdfcbank.com"
             }
         }
     ]

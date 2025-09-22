@@ -7,12 +7,21 @@ from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import classification_report
+import joblib
+from pathlib import Path
 
 # -------------------------------------------------------------------
 # 1️⃣ Load the dataset
 # -------------------------------------------------------------------
-data_path = r"C:\Users\sarve\Downloads\Models\models\zero_day_attack\data\merged_zero_day_dataset.csv"
-data = pd.read_csv(data_path)
+BASE_DIR = Path(__file__).parent.resolve()
+DATA_DIR = BASE_DIR.parent / "data"
+MODELS_DIR = BASE_DIR.parent / "models"
+MODELS_DIR.mkdir(parents=True, exist_ok=True)
+
+csv_files = list(DATA_DIR.glob("*.csv"))
+if not csv_files:
+    raise FileNotFoundError(f"No CSV file found in {DATA_DIR}")
+data = pd.read_csv(csv_files[0])
 
 print("Dataset shape:", data.shape)
 print("Columns:", list(data.columns))
@@ -94,9 +103,16 @@ print("\nClassification Report:\n")
 print(classification_report(y_test, y_pred))
 
 # -------------------------------------------------------------------
+# 10) Save the model
+# -------------------------------------------------------------------
+model_path = MODELS_DIR / "zero_day_model.pkl"
+joblib.dump(clf, model_path)
+print(f"\n✅ Model saved to: {model_path}")
+
+# -------------------------------------------------------------------
 # 🔟 Automatic Prediction (all columns included)
 # -------------------------------------------------------------------
-print("\n--- Automatic Threat Prediction ---")
+print("\n--- Example Prediction ---")
 
 # Prepare a default automatic input with all columns
 auto_input = {}
