@@ -1,6 +1,8 @@
 "use client"
 
 import { AdminLayout } from "@/components/dashboard/admin-layout"
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table"
+import { Switch } from "@/components/ui/switch"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -19,8 +21,12 @@ import {
   FileText,
   Mail,
   Lock,
+  User as UserIcon,
 } from "lucide-react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
+import { api, getAuthHeaders } from "@/lib/api"
+import { toast } from "sonner"
+import { useRouter } from "next/navigation"
 
 const systemStatus = [
   { service: "Threat Detection Engine", status: "online", uptime: "99.9%", lastCheck: "2 min ago" },
@@ -31,34 +37,146 @@ const systemStatus = [
   { service: "Analytics Engine", status: "online", uptime: "99.9%", lastCheck: "1 min ago" },
 ]
 
-const recentActions = [
-  { action: "User account created", user: "admin", timestamp: "2 min ago", type: "user" },
-  { action: "System backup completed", user: "system", timestamp: "15 min ago", type: "system" },
-  { action: "Security policy updated", user: "admin", timestamp: "1 hour ago", type: "security" },
-  { action: "Incident report exported", user: "admin", timestamp: "2 hours ago", type: "export" },
-  { action: "Database maintenance", user: "system", timestamp: "6 hours ago", type: "system" },
-]
+interface AdminAction {
+  id: string
+  action: string
+  user: string
+  timestamp: string
+  type: string
+}
+
+interface User {
+  id: string
+  name: string
+  email: string
+  role: "USER" | "ADMIN"
+  is_active: boolean
+  last_login: string | null
+}
 
 export default function AdminToolsPage() {
   const [bulkMessage, setBulkMessage] = useState("")
   const [isLoading, setIsLoading] = useState(false)
+  const [loading, setLoading] = useState(false)
+  const [isUserTableLoading, setIsUserTableLoading] = useState(false)
+  const [recentActions, setRecentActions] = useState<AdminAction[]>([])
+  const [users, setUsers] = useState<User[]>([])
+  const [showUserManagement, setShowUserManagement] = useState(false)
+  const router = useRouter()
 
-  const handleBulkNotification = async () => {
-    setIsLoading(true)
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false)
-      setBulkMessage("")
-      alert("Bulk notification sent successfully!")
-    }, 2000)
+  // Fetch recent actions on component mount
+  useEffect(() => {
+    const fetchRecentActions = async () => {
+      try {
+        const headers = getAuthHeaders()
+        const response = await fetch(api.admin.actions, { headers })
+        if (!response.ok) throw new Error("Failed to fetch recent actions.")
+        const data = await response.json()
+        setRecentActions(data)
+      } catch (error: any) {
+        toast.error("Error fetching actions", { description: error.message })
+      }
+    }
+    fetchRecentActions()
+  }, [])
+
+  // Fetch users when the user management section is shown
+  const fetchUsers = async () => {
+    setIsUserTableLoading(true)
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(api.admin.users, { headers })
+      if (!response.ok) throw new Error("Failed to fetch users.")
+      const data = await response.json()
+      setUsers(data)
+    } catch (error: any) {
+      toast.error("Error fetching users", { description: error.message })
+    } finally {
+      setIsUserTableLoading(false)
+    }
   }
 
-  const handleSystemAction = (action: string) => {
+  const handleManageUsersClick = () => {
+    setShowUserManagement(true)
+    fetchUsers()
+  }
+
+  const handleUserStatusChange = async (userId: string, isActive: boolean) => {
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(api.admin.updateUserStatus(userId), {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({ is_active: isActive }),
+      })
+
+      if (!response.ok) throw new Error("Failed to update user status.")
+
+      toast.success(`User status updated successfully.`)
+      fetchUsers() // Refresh user list
+    } catch (error: any) {
+      toast.error("Update failed", { description: error.message })
+    }
+  }
+
+  const handleBulkNotification = async (target: "all" | "admins" | "users") => {
+    setLoading(true)
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(api.admin.bulkNotification, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message: bulkMessage, target }),
+      })
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || "Failed to send notification.")
+      }
+      toast.success("Bulk notification sent successfully!")
+      setBulkMessage("")
+    } catch (error: any) {
+      toast.error("Notification Failed", { description: error.message })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const handleSystemAction = async (action: string, endpoint: string, method: "POST" | "GET" = "POST") => {
     setIsLoading(true)
-    setTimeout(() => {
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(endpoint, { method, headers })
+      if (!response.ok) {
+        const errorData = await response.json()
+        throw new Error(errorData.detail || `Action "${action}" failed.`)
+      }
+
+      // Handle file download for export
+      if (action === "Data export" && response.ok) {
+        const blob = await response.blob()
+        const url = window.URL.createObjectURL(blob)
+        const a = document.createElement("a")
+        a.href = url
+        const contentDisposition = response.headers.get("content-disposition")
+        let fileName = "incidents_export.csv"
+        if (contentDisposition) {
+          const fileNameMatch = contentDisposition.match(/filename="(.+)"/)
+          if (fileNameMatch && fileNameMatch.length > 1) fileName = fileNameMatch[1]
+        }
+        a.download = fileName
+        document.body.appendChild(a)
+        a.click()
+        a.remove()
+        window.URL.revokeObjectURL(url)
+        toast.success("Data export started.", { description: "Your file is downloading." })
+      } else {
+        toast.success(`${action} completed successfully!`)
+      }
+    } catch (error: any) {
+      toast.error("Action Failed", { description: error.message })
+    } finally {
       setIsLoading(false)
-      alert(`${action} completed successfully!`)
-    }, 1500)
+    }
   }
 
   const getStatusIcon = (status: string) => {
@@ -107,7 +225,7 @@ export default function AdminToolsPage() {
       <div className="space-y-6">
         {/* Header */}
         <div>
-          <h1 className="text-3xl font-bold text-foreground">Admin Tools</h1>
+          <h1 className="text-3xl font-bold">Admin Tools</h1>
           <p className="text-muted-foreground mt-2">System management and administrative utilities</p>
         </div>
 
@@ -119,10 +237,10 @@ export default function AdminToolsPage() {
                 <Users className="h-8 w-8 text-primary" />
                 <div>
                   <p className="font-medium">User Management</p>
-                  <p className="text-sm text-muted-foreground">1,247 active users</p>
+                  <p className="text-sm text-muted-foreground">View & manage users</p>
                 </div>
               </div>
-              <Button className="w-full mt-4" size="sm">
+              <Button className="w-full mt-4" size="sm" onClick={handleManageUsersClick}>
                 Manage Users
               </Button>
             </CardContent>
@@ -141,7 +259,7 @@ export default function AdminToolsPage() {
                 className="w-full mt-4 bg-transparent"
                 size="sm"
                 variant="outline"
-                onClick={() => handleSystemAction("Database backup")}
+                onClick={() => handleSystemAction("Database backup", api.admin.createBackup)}
                 disabled={isLoading}
               >
                 {isLoading ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : null}
@@ -163,7 +281,7 @@ export default function AdminToolsPage() {
                 className="w-full mt-4 bg-transparent"
                 size="sm"
                 variant="outline"
-                onClick={() => handleSystemAction("Data export")}
+                onClick={() => handleSystemAction("Data export", api.admin.exportIncidents, "GET")}
                 disabled={isLoading}
               >
                 Export Reports
@@ -184,7 +302,7 @@ export default function AdminToolsPage() {
                 className="w-full mt-4 bg-transparent"
                 size="sm"
                 variant="outline"
-                onClick={() => handleSystemAction("System refresh")}
+                onClick={() => toast.info("System Refresh", { description: "This is a mock action." })}
                 disabled={isLoading}
               >
                 Refresh System
@@ -192,6 +310,52 @@ export default function AdminToolsPage() {
             </CardContent>
           </Card>
         </div>
+
+        {/* User Management Table (Conditional) */}
+        {showUserManagement && (
+          <Card className="cyber-border">
+            <CardHeader>
+              <CardTitle className="flex items-center"><UserIcon className="mr-2" /> User Management</CardTitle>
+              <CardDescription>Activate or deactivate user accounts. <Button variant="link" className="p-0 h-auto" onClick={() => setShowUserManagement(false)}>Hide</Button></CardDescription>
+            </CardHeader>
+            <CardContent>
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>Name</TableHead>
+                    <TableHead>Email</TableHead>
+                    <TableHead>Role</TableHead>
+                    <TableHead>Last Login</TableHead>
+                    <TableHead className="text-right">Status (Active/Inactive)</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {isUserTableLoading ? (
+                    <TableRow><TableCell colSpan={5} className="text-center">Loading users...</TableCell></TableRow>
+                  ) : (
+                    users.map((user) => (
+                      <TableRow key={user.id}>
+                        <TableCell className="font-medium">{user.name}</TableCell>
+                        <TableCell>{user.email}</TableCell>
+                        <TableCell>
+                          <Badge variant={user.role === "ADMIN" ? "destructive" : "outline"}>{user.role}</Badge>
+                        </TableCell>
+                        <TableCell>{user.last_login ? new Date(user.last_login).toLocaleString() : "Never"}</TableCell>
+                        <TableCell className="text-right">
+                          <Switch
+                            checked={user.is_active}
+                            onCheckedChange={(checked) => handleUserStatusChange(user.id, checked)}
+                            aria-label={`Toggle status for ${user.name}`}
+                          />
+                        </TableCell>
+                      </TableRow>
+                    ))
+                  )}
+                </TableBody>
+              </Table>
+            </CardContent>
+          </Card>
+        )}
 
         {/* System Status */}
         <Card className="cyber-border">
@@ -235,11 +399,15 @@ export default function AdminToolsPage() {
                 rows={4}
               />
               <div className="flex space-x-2">
-                <Button onClick={handleBulkNotification} disabled={!bulkMessage.trim() || isLoading} className="flex-1">
+                <Button
+                  onClick={() => handleBulkNotification("all")}
+                  disabled={!bulkMessage.trim() || isLoading}
+                  className="flex-1"
+                > 
                   {isLoading ? <RefreshCw className="h-4 w-4 animate-spin mr-2" /> : <Mail className="h-4 w-4 mr-2" />}
                   Send to All Users
                 </Button>
-                <Button variant="outline" disabled={!bulkMessage.trim()}>
+                <Button variant="outline" onClick={() => handleBulkNotification("admins")} disabled={!bulkMessage.trim() || isLoading}>
                   Send to Admins
                 </Button>
               </div>
@@ -254,13 +422,13 @@ export default function AdminToolsPage() {
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {recentActions.map((action, index) => (
-                  <div key={index} className="flex items-center space-x-3 p-3 bg-muted/50 rounded-lg">
+                {recentActions.slice(0, 5).map((action) => (
+                  <div key={action.id} className="flex items-center space-x-3 p-3 bg-muted/50 rounded-lg">
                     {getActionIcon(action.type)}
                     <div className="flex-1">
                       <p className="font-medium text-sm">{action.action}</p>
                       <p className="text-xs text-muted-foreground">
-                        by {action.user} • {action.timestamp}
+                        by {action.user} • {new Date(action.timestamp).toLocaleString()}
                       </p>
                     </div>
                   </div>
@@ -292,7 +460,7 @@ export default function AdminToolsPage() {
               </div>
             </div>
             <div className="flex space-x-2 mt-6">
-              <Button>
+              <Button onClick={() => toast.info("Mock Action", { description: "Security settings update is not implemented." })}>
                 <Lock className="h-4 w-4 mr-2" />
                 Update Security Settings
               </Button>

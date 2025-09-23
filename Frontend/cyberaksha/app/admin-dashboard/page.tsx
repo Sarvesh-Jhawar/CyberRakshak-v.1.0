@@ -1,28 +1,65 @@
 "use client"
 
+import { useEffect, useState } from "react"
 import { AdminLayout } from "@/components/dashboard/admin-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts"
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+} from "recharts"
 import { AlertTriangle, Users, TrendingUp, Clock } from "lucide-react"
 
-const incidentData = [
-  { month: "Jan", incidents: 45, resolved: 42 },
-  { month: "Feb", incidents: 52, resolved: 48 },
-  { month: "Mar", incidents: 38, resolved: 35 },
-  { month: "Apr", incidents: 61, resolved: 58 },
-  { month: "May", incidents: 55, resolved: 52 },
-  { month: "Jun", incidents: 67, resolved: 63 },
-]
-
-const riskData = [
-  { name: "Critical", value: 23, color: "#ef4444" },
-  { name: "High", value: 45, color: "#f97316" },
-  { name: "Medium", value: 78, color: "#eab308" },
-  { name: "Low", value: 134, color: "#22c55e" },
-]
-
 export default function AdminDashboard() {
+  // State for different datasets
+  const [incidentData, setIncidentData] = useState<any[]>([])
+  const [riskData, setRiskData] = useState<any[]>([])
+  const [stats, setStats] = useState<any>(null)
+  const [priorityIncidents, setPriorityIncidents] = useState<any[]>([])
+  const [heatmap, setHeatmap] = useState<any[]>([])
+
+  useEffect(() => {
+    async function fetchData() {
+      try {
+        const [statsRes, incidentsRes, riskRes, priorityRes, heatmapRes] = await Promise.all([
+          fetch("http://127.0.0.1:8000/api/v1/admin/dashboard/stats", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+          fetch("http://127.0.0.1:8000/api/v1/admin/incidents/trends", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+          fetch("http://127.0.0.1:8000/api/v1/admin/incidents/risk", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+          fetch("http://127.0.0.1:8000/api/v1/admin/incidents/priority", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+          fetch("http://127.0.0.1:8000/api/v1/admin/incidents/heatmap", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+        ])
+
+        setStats(await statsRes.json())
+        setIncidentData(await incidentsRes.json())
+        setRiskData(await riskRes.json())
+        setPriorityIncidents(await priorityRes.json())
+        setHeatmap(await heatmapRes.json())
+      } catch (err) {
+        console.error("Failed to fetch admin dashboard data:", err)
+      }
+    }
+
+    fetchData()
+  }, [])
+
   return (
     <AdminLayout>
       <div className="space-y-6">
@@ -33,59 +70,61 @@ export default function AdminDashboard() {
         </div>
 
         {/* Stats Overview */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-          <Card className="cyber-border">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Critical Incidents</p>
-                  <p className="text-3xl font-bold text-red-500">23</p>
-                  <p className="text-sm text-muted-foreground">+3 from yesterday</p>
+        {stats && (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+            <Card className="cyber-border">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Open Incidents</p>
+                    <p className="text-3xl font-bold text-red-500">{stats.open_incidents || 0}</p>
+                    <p className="text-sm text-muted-foreground">Require attention</p>
+                  </div>
+                  <AlertTriangle className="h-8 w-8 text-red-500" />
                 </div>
-                <AlertTriangle className="h-8 w-8 text-red-500" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card className="cyber-border">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Active Users</p>
-                  <p className="text-3xl font-bold text-primary">1,247</p>
-                  <p className="text-sm text-muted-foreground">+12% this month</p>
+            <Card className="cyber-border">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Active Users</p>
+                    <p className="text-3xl font-bold text-primary">{stats.active_users || 0}</p>
+                    <p className="text-sm text-muted-foreground">Total: {stats.total_users || 0}</p>
+                  </div>
+                  <Users className="h-8 w-8 text-primary" />
                 </div>
-                <Users className="h-8 w-8 text-primary" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card className="cyber-border">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Resolution Rate</p>
-                  <p className="text-3xl font-bold text-green-500">94%</p>
-                  <p className="text-sm text-muted-foreground">+2% improvement</p>
+            <Card className="cyber-border">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Resolution Rate</p>
+                    <p className="text-3xl font-bold text-green-500">{stats.resolution_rate || 0}%</p>
+                    <p className="text-sm text-muted-foreground">Resolved: {stats.resolved_incidents || 0}</p>
+                  </div>
+                  <TrendingUp className="h-8 w-8 text-green-500" />
                 </div>
-                <TrendingUp className="h-8 w-8 text-green-500" />
-              </div>
-            </CardContent>
-          </Card>
+              </CardContent>
+            </Card>
 
-          <Card className="cyber-border">
-            <CardContent className="p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-medium text-muted-foreground">Avg Response Time</p>
-                  <p className="text-3xl font-bold text-yellow-500">2.4h</p>
-                  <p className="text-sm text-muted-foreground">-0.3h from last week</p>
+            <Card className="cyber-border">
+              <CardContent className="p-6">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-medium text-muted-foreground">Total Incidents</p>
+                    <p className="text-3xl font-bold text-yellow-500">{stats.total_incidents || 0}</p>
+                    <p className="text-sm text-muted-foreground">Recent: {stats.recent_incidents || 0}</p>
+                  </div>
+                  <Clock className="h-8 w-8 text-yellow-500" />
                 </div>
-                <Clock className="h-8 w-8 text-yellow-500" />
-              </div>
-            </CardContent>
-          </Card>
-        </div>
+              </CardContent>
+            </Card>
+          </div>
+        )}
 
         {/* Charts Row */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -97,13 +136,12 @@ export default function AdminDashboard() {
             </CardHeader>
             <CardContent>
               <ResponsiveContainer width="100%" height={300}>
-                <BarChart data={incidentData}>
+                <BarChart data={incidentData.trends || []}>
                   <CartesianGrid strokeDasharray="3 3" />
                   <XAxis dataKey="month" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="incidents" fill="#ef4444" name="Incidents" />
-                  <Bar dataKey="resolved" fill="#22c55e" name="Resolved" />
+                  <Bar dataKey="count" fill="#ef4444" name="Incidents" />
                 </BarChart>
               </ResponsiveContainer>
             </CardContent>
@@ -119,15 +157,15 @@ export default function AdminDashboard() {
               <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
-                    data={riskData}
+                    data={riskData.risk_levels || []}
                     cx="50%"
                     cy="50%"
                     outerRadius={100}
-                    dataKey="value"
-                    label={({ name, value }) => `${name}: ${value}`}
+                    dataKey="count"
+                    label={({ name, count }) => `${name}: ${count}`}
                   >
-                    {riskData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={entry.color} />
+                    {(riskData.risk_levels || []).map((entry, index) => (
+                      <Cell key={`cell-${index}`} fill={entry.color || "#8884d8"} />
                     ))}
                   </Pie>
                   <Tooltip />
@@ -145,59 +183,37 @@ export default function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              {[
-                {
-                  id: "INC-2024-001",
-                  type: "Malware Detection",
-                  unit: "IT Division",
-                  severity: "Critical",
-                  time: "2 min ago",
-                },
-                {
-                  id: "INC-2024-002",
-                  type: "Phishing Campaign",
-                  unit: "HR Department",
-                  severity: "High",
-                  time: "15 min ago",
-                },
-                {
-                  id: "INC-2024-003",
-                  type: "Data Breach Attempt",
-                  unit: "Finance",
-                  severity: "Critical",
-                  time: "1 hour ago",
-                },
-                {
-                  id: "INC-2024-004",
-                  type: "Suspicious Network Activity",
-                  unit: "Operations",
-                  severity: "High",
-                  time: "2 hours ago",
-                },
-              ].map((incident) => (
-                <div
-                  key={incident.id}
-                  className="flex items-center justify-between p-4 bg-muted/50 rounded-lg hover:bg-muted/70 transition-colors"
-                >
-                  <div className="flex items-center space-x-4">
-                    <AlertTriangle
-                      className={`h-5 w-5 ${incident.severity === "Critical" ? "text-red-500" : "text-orange-500"}`}
-                    />
-                    <div>
-                      <p className="font-medium">{incident.type}</p>
-                      <p className="text-sm text-muted-foreground">
-                        {incident.id} • {incident.unit}
-                      </p>
+              {(priorityIncidents.priority_incidents || []).length > 0 ? (
+                (priorityIncidents.priority_incidents || []).map((incident) => (
+                  <div
+                    key={incident.id}
+                    className="flex items-center justify-between p-4 bg-muted/50 rounded-lg hover:bg-muted/70 transition-colors"
+                  >
+                    <div className="flex items-center space-x-4">
+                      <AlertTriangle
+                        className={`h-5 w-5 ${incident.priority === "High" ? "text-red-500" : "text-orange-500"}`}
+                      />
+                      <div>
+                        <p className="font-medium">{incident.category}</p>
+                        <p className="text-sm text-muted-foreground">
+                          {incident.id} • {incident.unit || "Unknown Unit"}
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex items-center space-x-3">
+                      <Badge variant={incident.priority === "High" ? "destructive" : "secondary"}>
+                        {incident.priority}
+                      </Badge>
+                      <span className="text-sm text-muted-foreground">{incident.created_at}</span>
                     </div>
                   </div>
-                  <div className="flex items-center space-x-3">
-                    <Badge variant={incident.severity === "Critical" ? "destructive" : "secondary"}>
-                      {incident.severity}
-                    </Badge>
-                    <span className="text-sm text-muted-foreground">{incident.time}</span>
-                  </div>
+                ))
+              ) : (
+                <div className="text-center py-8 text-muted-foreground">
+                  <AlertTriangle className="h-12 w-12 mx-auto mb-4 opacity-50" />
+                  <p>No priority incidents at this time</p>
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>
@@ -210,31 +226,30 @@ export default function AdminDashboard() {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-6 gap-4">
-              {[
-                { unit: "IT Division", risk: "high", incidents: 12 },
-                { unit: "HR Dept", risk: "medium", incidents: 8 },
-                { unit: "Finance", risk: "critical", incidents: 15 },
-                { unit: "Operations", risk: "low", incidents: 3 },
-                { unit: "R&D", risk: "medium", incidents: 6 },
-                { unit: "Admin", risk: "low", incidents: 2 },
-              ].map((unit) => (
-                <div
-                  key={unit.unit}
-                  className={`p-4 rounded-lg text-center transition-all hover:scale-105 ${
-                    unit.risk === "critical"
-                      ? "bg-red-500/20 border border-red-500"
-                      : unit.risk === "high"
+              {(heatmap.heatmap_data || []).length > 0 ? (
+                (heatmap.heatmap_data || []).map((unit) => (
+                  <div
+                    key={unit.unit}
+                    className={`p-4 rounded-lg text-center transition-all hover:scale-105 ${
+                      unit.risk_level === "critical"
+                        ? "bg-red-500/20 border border-red-500"
+                        : unit.risk_level === "high"
                         ? "bg-orange-500/20 border border-orange-500"
-                        : unit.risk === "medium"
-                          ? "bg-yellow-500/20 border border-yellow-500"
-                          : "bg-green-500/20 border border-green-500"
-                  }`}
-                >
-                  <p className="font-medium text-sm">{unit.unit}</p>
-                  <p className="text-2xl font-bold mt-2">{unit.incidents}</p>
-                  <p className="text-xs text-muted-foreground">incidents</p>
+                        : unit.risk_level === "medium"
+                        ? "bg-yellow-500/20 border border-yellow-500"
+                        : "bg-green-500/20 border border-green-500"
+                    }`}
+                  >
+                    <p className="font-medium text-sm">{unit.unit}</p>
+                    <p className="text-2xl font-bold mt-2">{unit.incident_count}</p>
+                    <p className="text-xs text-muted-foreground">incidents</p>
+                  </div>
+                ))
+              ) : (
+                <div className="col-span-full text-center py-8 text-muted-foreground">
+                  <p>No heatmap data available</p>
                 </div>
-              ))}
+              )}
             </div>
           </CardContent>
         </Card>

@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { Shield, FileText, History, BookOpen, HelpCircle, LogOut, User, Menu, X, Monitor } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -21,12 +20,20 @@ export function UserLayout({ children }: UserLayoutProps) {
   const router = useRouter()
 
   useEffect(() => {
-    const userData = localStorage.getItem("user")
-    if (userData) {
-      setUser(JSON.parse(userData))
-    } else {
-      router.push("/login")
+    const fetchUser = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/v1/auth/me", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        })
+        if (!res.ok) throw new Error("Failed to fetch user info")
+        const data = await res.json()
+        setUser(data)
+      } catch (err) {
+        router.push("/login")
+      }
     }
+
+    fetchUser()
   }, [router])
 
   const navigation = [
@@ -38,9 +45,19 @@ export function UserLayout({ children }: UserLayoutProps) {
     { name: "Profile", href: "/user-dashboard/profile", icon: User },
   ]
 
-  const handleLogout = () => {
-    localStorage.removeItem("user")
-    router.push("/login")
+  const handleLogout = async () => {
+    try {
+      await fetch("http://127.0.0.1:8000/api/v1/auth/logout", { 
+        method: "POST",
+        headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+      })
+    } catch (err) {
+      console.warn("Logout API failed, clearing client session anyway")
+    } finally {
+      localStorage.removeItem("token")
+      localStorage.removeItem("role")
+      router.push("/login")
+    }
   }
 
   const isActive = (href: string) => pathname === href
@@ -49,19 +66,22 @@ export function UserLayout({ children }: UserLayoutProps) {
 
   return (
     <div className="min-h-screen bg-background">
+      {/* Mobile sidebar overlay */}
       {sidebarOpen && (
         <div className="fixed inset-0 z-40 lg:hidden" onClick={() => setSidebarOpen(false)}>
           <div className="fixed inset-0 bg-background/80 backdrop-blur-sm" />
         </div>
       )}
 
+      {/* Sidebar */}
       <div
         className={cn(
           "fixed inset-y-0 left-0 z-50 w-64 bg-sidebar border-r border-sidebar-border transform transition-transform duration-200 ease-in-out lg:translate-x-0",
-          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0",
+          sidebarOpen ? "translate-x-0" : "-translate-x-full lg:translate-x-0"
         )}
       >
         <div className="flex h-full flex-col">
+          {/* Sidebar Header */}
           <div className="flex items-center justify-between p-6 border-b border-sidebar-border">
             <div className="flex items-center space-x-3">
               <Shield className="h-8 w-8 text-sidebar-accent cyber-glow" />
@@ -75,6 +95,7 @@ export function UserLayout({ children }: UserLayoutProps) {
             </Button>
           </div>
 
+          {/* Navigation */}
           <nav className="flex-1 px-4 py-6 space-y-2">
             {navigation.map((item) => (
               <Link
@@ -84,7 +105,7 @@ export function UserLayout({ children }: UserLayoutProps) {
                   "flex items-center space-x-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
                   isActive(item.href)
                     ? "bg-sidebar-accent text-sidebar-accent-foreground cyber-glow"
-                    : "text-sidebar-foreground hover:bg-sidebar-accent/10 hover:text-sidebar-accent",
+                    : "text-sidebar-foreground hover:bg-sidebar-accent/10 hover:text-sidebar-accent"
                 )}
                 onClick={() => setSidebarOpen(false)}
               >
@@ -94,20 +115,21 @@ export function UserLayout({ children }: UserLayoutProps) {
             ))}
           </nav>
 
+          {/* User Profile & Logout */}
           <div className="p-4 border-t border-sidebar-border">
             <div className="flex items-center space-x-3 mb-4">
               <Avatar className="h-8 w-8">
-                <AvatarFallback className="bg-primary text-primary-foreground text-sm">
-                  {user?.name?.charAt(0) || "U"}
-                </AvatarFallback>
+                {user.avatar ? (
+                  <AvatarImage src={user.avatar} />
+                ) : (
+                  <AvatarFallback className="bg-primary text-primary-foreground text-sm">
+                    {user?.name?.charAt(0) || "U"}
+                  </AvatarFallback>
+                )}
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">
-                  {user?.name || "User"}
-                </p>
-                <p className="text-xs text-sidebar-foreground/70 truncate">
-                  {user?.email || "user@defence.mil"}
-                </p>
+                <p className="text-sm font-medium text-sidebar-foreground truncate">{user?.name || "User"}</p>
+                <p className="text-xs text-sidebar-foreground/70 truncate">{user?.email || "user@defence.mil"}</p>
               </div>
             </div>
             <Button
@@ -123,6 +145,7 @@ export function UserLayout({ children }: UserLayoutProps) {
         </div>
       </div>
 
+      {/* Main Content */}
       <div className="lg:pl-64">
         <header className="sticky top-0 bg-card/80 backdrop-blur-sm border-b border-border z-30">
           <div className="flex items-center justify-between px-6 h-16">

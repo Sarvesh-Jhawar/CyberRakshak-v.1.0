@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState, useEffect } from "react"
 import { Shield, List, BarChart3, Bell, Settings, LogOut, User, Menu, X, Monitor, AlertTriangle } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -14,25 +13,77 @@ interface AdminLayoutProps {
   children: React.ReactNode
 }
 
+interface User {
+  name: string
+  role: string
+  avatar?: string
+}
+
+interface Stats {
+  critical: number
+  pending: number
+}
+
 export function AdminLayout({ children }: AdminLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
-  const [user, setUser] = useState<any>(null)
+  const [user, setUser] = useState<User | null>(null)
+  const [stats, setStats] = useState<Stats>({ critical: 0, pending: 0 })
+  const [alertsCount, setAlertsCount] = useState(0)
+  const [loading, setLoading] = useState(true)
+
   const pathname = usePathname()
   const router = useRouter()
 
+  // Fetch user info
   useEffect(() => {
-    const userData = localStorage.getItem("user")
-    if (userData) {
-      const parsedUser = JSON.parse(userData)
-      if (parsedUser.role !== "admin") {
-        router.push("/user-dashboard")
-        return
+    async function fetchUser() {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/v1/admin/profile", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        })
+        if (!res.ok) throw new Error("Failed to fetch profile")
+        const data = await res.json()
+        if (data.role !== "ADMIN") {
+          router.push("/user-dashboard")
+          return
+        }
+        setUser(data)
+      } catch (err) {
+        router.push("/login")
       }
-      setUser(parsedUser)
-    } else {
-      router.push("/login")
     }
+    fetchUser()
   }, [router])
+
+  // Fetch dashboard stats and alerts
+  useEffect(() => {
+    async function fetchStats() {
+      try {
+        const [statsRes, alertsRes] = await Promise.all([
+          fetch("http://127.0.0.1:8000/api/v1/admin/dashboard/stats", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+          fetch("http://127.0.0.1:8000/api/v1/admin/dashboard/alerts", {
+            headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+          }),
+        ])
+
+        if (!statsRes.ok || !alertsRes.ok) throw new Error("Failed to fetch dashboard data")
+
+        const statsData = await statsRes.json()
+        const alertsData = await alertsRes.json()
+
+        setStats(statsData)
+        setAlertsCount(alertsData.critical || 0)
+      } catch (err) {
+        console.error(err)
+      } finally {
+        setLoading(false)
+      }
+    }
+
+    fetchStats()
+  }, [])
 
   const navigation = [
     { name: "Dashboard", href: "/admin-dashboard", icon: Monitor },
@@ -44,13 +95,14 @@ export function AdminLayout({ children }: AdminLayoutProps) {
   ]
 
   const handleLogout = () => {
-    localStorage.removeItem("user")
+    localStorage.removeItem("token")
+    localStorage.removeItem("role")
     router.push("/login")
   }
 
   const isActive = (href: string) => pathname === href
 
-  if (!user) return null
+  if (!user || loading) return null
 
   return (
     <div className="min-h-screen bg-background">
@@ -87,11 +139,11 @@ export function AdminLayout({ children }: AdminLayoutProps) {
           <div className="px-4 py-3 border-b border-sidebar-border">
             <div className="grid grid-cols-2 gap-2 text-xs">
               <div className="text-center">
-                <div className="text-lg font-bold text-red-500">23</div>
+                <div className="text-lg font-bold text-red-500">{stats.critical}</div>
                 <div className="text-sidebar-foreground/70">Critical</div>
               </div>
               <div className="text-center">
-                <div className="text-lg font-bold text-yellow-500">45</div>
+                <div className="text-lg font-bold text-yellow-500">{stats.pending}</div>
                 <div className="text-sidebar-foreground/70">Pending</div>
               </div>
             </div>
@@ -124,7 +176,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
           <div className="p-4 border-t border-sidebar-border">
             <div className="flex items-center space-x-3 mb-4">
               <Avatar className="h-8 w-8">
-                <AvatarImage src="/placeholder.svg?height=32&width=32" />
+                <AvatarImage src={user.avatar || "/placeholder.svg?height=32&width=32"} />
                 <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground">
                   {user?.name
                     ?.split(" ")
@@ -168,7 +220,7 @@ export function AdminLayout({ children }: AdminLayoutProps) {
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
                 <AlertTriangle className="h-4 w-4 text-red-500" />
-                <span className="text-sm text-muted-foreground">3 Critical Alerts</span>
+                <span className="text-sm text-muted-foreground">{alertsCount} Critical Alerts</span>
               </div>
               <div className="flex items-center space-x-2">
                 <div className="h-2 w-2 bg-primary rounded-full animate-pulse"></div>

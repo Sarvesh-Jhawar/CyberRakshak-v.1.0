@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Shield, Eye, EyeOff, Mail, Lock, User, Phone, Award as IdCard } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -29,11 +28,41 @@ export default function SignupPage() {
     e.preventDefault()
     setIsLoading(true)
 
-    // Simulate registration
-    setTimeout(() => {
+    try {
+      // Map frontend field names to backend expected field names
+      const registrationData = {
+        name: formData.name,
+        service_id: formData.serviceId,
+        relation: formData.relation,
+        email: formData.email,
+        phone: formData.phone,
+        password: formData.password,
+        unit: "", // Optional field
+        clearance_level: "" // Optional field
+      }
+
+      const res = await fetch("http://127.0.0.1:8000/api/v1/auth/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(registrationData),
+      })
+
+      if (!res.ok) {
+        const errorData = await res.json()
+        console.error("Registration error:", errorData)
+        throw new Error(errorData.detail || "Registration failed")
+      }
+
+      const result = await res.json()
+      console.log("Registration successful:", result)
+      alert("Registration successful. Please login.")
+      router.push("/login")
+    } catch (err: any) {
+      console.error("Registration error:", err)
+      alert(err.message)
+    } finally {
       setIsLoading(false)
-      router.push("/dashboard")
-    }, 2000)
+    }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -70,6 +99,7 @@ export default function SignupPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-4">
+              {/* Full Name */}
               <div className="space-y-2">
                 <Label htmlFor="name">Full Name</Label>
                 <div className="relative">
@@ -87,6 +117,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
+              {/* Service ID */}
               <div className="space-y-2">
                 <Label htmlFor="serviceId">Service ID / Defence ID</Label>
                 <div className="relative">
@@ -104,6 +135,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
+              {/* Relation */}
               <div className="space-y-2">
                 <Label htmlFor="relation">Relation</Label>
                 <Select onValueChange={handleSelectChange} required>
@@ -118,6 +150,7 @@ export default function SignupPage() {
                 </Select>
               </div>
 
+              {/* Email */}
               <div className="space-y-2">
                 <Label htmlFor="email">Email</Label>
                 <div className="relative">
@@ -135,6 +168,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
+              {/* Phone */}
               <div className="space-y-2">
                 <Label htmlFor="phone">Phone Number</Label>
                 <div className="relative">
@@ -152,6 +186,7 @@ export default function SignupPage() {
                 </div>
               </div>
 
+              {/* Password */}
               <div className="space-y-2">
                 <Label htmlFor="password">Password</Label>
                 <div className="relative">

@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useState, useEffect, useRef } from "react"
 import { UserLayout } from "@/components/dashboard/user-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -17,50 +17,129 @@ import {
   Mic,
   Send,
   Paperclip,
+  X,
 } from "lucide-react"
 import Link from "next/link"
+import { api, getAuthHeaders } from "@/lib/api"
+import { toast } from "sonner"
 import Image from "next/image"
+
+interface Incident {
+  id: string;
+  title: string;
+  category: string;
+  status: string;
+  created_at: string;
+}
 
 export default function UserDashboard() {
   const [message, setMessage] = useState("")
+  const [file, setFile] = useState<File | null>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [isRecording, setIsRecording] = useState(false)
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
+  const audioChunksRef = useRef<Blob[]>([])
+
   const [chatMessages, setChatMessages] = useState<
-    Array<{ id: number; type: "user" | "ai"; content: string; showComplaintOption?: boolean }>
+    Array<{ id: number; type: "user" | "ai"; content: string | React.ReactNode; showComplaintOption?: boolean }>
   >([])
+  const [recentIncidents, setRecentIncidents] = useState<Incident[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [isAiTyping, setIsAiTyping] = useState(false)
 
-  const handleSendMessage = async () => {
-    if (!message.trim()) return
+  const chatContainerRef = useRef<HTMLDivElement>(null)
 
-    const userMessage = { id: Date.now(), type: "user" as const, content: message }
-    setChatMessages((prev) => [...prev, userMessage])
-    setMessage("")
-    setIsLoading(true)
-
-    // Simulate AI response
-    setTimeout(() => {
-      const aiResponse = {
-        id: Date.now() + 1,
-        type: "ai" as const,
-        content: getAIResponse(message),
-        showComplaintOption: true,
-      }
-      setChatMessages((prev) => [...prev, aiResponse])
-      setIsLoading(false)
-    }, 1500)
+  const getStatusBadgeVariant = (status: string) => {
+    switch (status?.toLowerCase()) {
+      case "resolved":
+      case "closed":
+        return "outline-green"
+      case "pending":
+      case "under review":
+        return "outline-yellow"
+      default:
+        return "outline"
+    }
   }
 
-  const getAIResponse = (userMessage: string) => {
-    const lowerMessage = userMessage.toLowerCase()
-    if (lowerMessage.includes("phishing") || lowerMessage.includes("suspicious email")) {
-      return "I understand you've received a suspicious email. This could be a phishing attempt. Here's what you should do immediately: 1) Don't click any links or download attachments, 2) Forward the email to your IT security team, 3) Delete the email from your inbox. Would you like me to help you file a formal complaint about this incident?"
+  useEffect(() => {
+    // Scroll to the bottom of the chat container when new messages are added
+    if (chatContainerRef.current) {
+      chatContainerRef.current.scrollTop = chatContainerRef.current.scrollHeight
     }
-    if (lowerMessage.includes("malware") || lowerMessage.includes("virus")) {
-      return "A potential malware infection is a serious security concern. Please: 1) Disconnect from the network immediately, 2) Run a full system scan, 3) Contact your IT support team. I can help you document this incident properly."
+  }, [chatMessages, isAiTyping])
+
+  const handleSendMessage = async () => {
+    if (!message.trim() && !file) return
+
+    let userMessageContent: React.ReactNode = message
+    if (file) {
+      userMessageContent = (
+        <>
+          {message}
+          <div className="mt-2 text-xs flex items-center gap-2 p-2 bg-black/20 rounded-md">
+            <Paperclip className="h-3 w-3" /> {file.name}
+          </div>
+        </>
+      )
     }
-    if (lowerMessage.includes("password") || lowerMessage.includes("account")) {
-      return "Account security issues require immediate attention. Please: 1) Change your password immediately, 2) Enable two-factor authentication, 3) Check for unauthorized access. Let me help you file a security incident report."
+
+    const userMessage = { id: Date.now(), type: "user" as const, content: userMessageContent }
+    setChatMessages((prev) => [...prev, userMessage])
+    setMessage("")
+    setFile(null)
+    setIsAiTyping(true)
+
+    try {
+      const headers = {
+        ...getAuthHeaders(),
+        'Content-Type': 'application/json'
+      }
+      
+      const response = await fetch(api.chat.sudarshan, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ message }),
+      });
+
+      if (!response.ok) {
+        throw new Error("AI assistant is not responding. Please try again later.");
+      }
+
+      const aiData = await response.json();
+      
+      // Display both response and recommendation if available
+      const aiResponseContent = (
+        <>
+          <p>{aiData.response}</p>
+          {aiData.recommendation && (
+            <p className="mt-2 text-sm text-primary">
+              Recommendation: {aiData.recommendation}
+            </p>
+          )}
+        </>
+      );
+
+      const aiMessage = {
+        id: Date.now() + 1,
+        type: "ai" as const,
+        content: aiResponseContent,
+        showComplaintOption: !!aiData.recommendation,
+      };
+
+      setChatMessages((prev) => [...prev, aiMessage]);
+    } catch (error: any) {
+      console.error("[SUDARSHAN CHAKRA] Error:", error);
+      toast.error("AI Assistant Error", { description: error.message });
+      const errorMessage = {
+        id: Date.now() + 1,
+        type: "ai" as const,
+        content: "Sorry, I encountered an error and couldn't process your request. Please try again."
+      };
+      setChatMessages((prev) => [...prev, errorMessage]);
+    } finally {
+      setIsAiTyping(false)
     }
-    return "I'm here to help with your cybersecurity concerns. Based on your description, I recommend documenting this incident for proper tracking and resolution. Would you like assistance filing a formal complaint?"
   }
 
   const handleFileComplaint = () => {
@@ -77,6 +156,75 @@ export default function UserDashboard() {
       },
     ])
   }
+
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0])
+      // Optionally, you can show a toast notification
+      toast.info(`File "${e.target.files[0].name}" attached.`)
+    }
+  }
+
+  const handleVoiceInput = async () => {
+    if (isRecording) {
+      mediaRecorderRef.current?.stop()
+      setIsRecording(false)
+    } else {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+        const mediaRecorder = new MediaRecorder(stream)
+        mediaRecorderRef.current = mediaRecorder
+        audioChunksRef.current = []
+
+        mediaRecorder.ondataavailable = (event) => {
+          audioChunksRef.current.push(event.data)
+        }
+
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
+          const audioUrl = URL.createObjectURL(audioBlob)
+          // For now, let's just log it. Later this can be sent to a speech-to-text API.
+          console.log("Recorded audio:", audioUrl, audioBlob)
+          toast.success("Voice input recorded. Processing is not yet implemented.")
+          // Clean up stream tracks
+          stream.getTracks().forEach((track) => track.stop())
+        }
+
+        mediaRecorder.start()
+        setIsRecording(true)
+        toast.info("Recording started... Click again to stop.")
+      } catch (error) {
+        console.error("Error accessing microphone:", error)
+        toast.error("Could not access microphone.", {
+          description: "Please ensure you have a microphone and have granted permission.",
+        })
+      }
+    }
+  }
+
+  const triggerFileSelect = () => {
+    if (fileInputRef.current) {
+      fileInputRef.current.click()
+    }
+  }
+
+  useEffect(() => {
+    const fetchRecentActivity = async () => {
+      try {
+        const headers = getAuthHeaders()
+        const response = await fetch(api.incidents.list, { headers })
+        if (!response.ok) {
+          throw new Error("Failed to fetch recent activity.")
+        }
+        const data = await response.json()
+        // Get the 2 most recent incidents
+        setRecentIncidents(data.slice(0, 2))
+      } catch (error: any) {
+        toast.error("Could not load activity", { description: error.message })
+      }
+    }
+    fetchRecentActivity()
+  }, [])
 
   return (
     <UserLayout>
@@ -107,7 +255,7 @@ export default function UserDashboard() {
           </CardHeader>
           <CardContent>
             {/* Chat Messages */}
-            <div className="space-y-4 mb-6 max-h-96 overflow-y-auto">
+            <div ref={chatContainerRef} className="space-y-4 mb-6 h-96 overflow-y-auto p-2">
               {chatMessages.length === 0 && (
                 <div className="text-center py-8">
                   <Image
@@ -128,7 +276,7 @@ export default function UserDashboard() {
                       msg.type === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    <p className="text-sm">{msg.content}</p>
+                    <div className="text-sm">{msg.content}</div>
                     {msg.showComplaintOption && (
                       <Button size="sm" className="mt-2 cyber-glow" onClick={handleFileComplaint}>
                         File Complaint
@@ -138,12 +286,12 @@ export default function UserDashboard() {
                 </div>
               ))}
 
-              {isLoading && (
+              {isAiTyping && (
                 <div className="flex justify-start">
                   <div className="bg-muted text-muted-foreground p-3 rounded-lg">
                     <div className="flex items-center space-x-2">
                       <div className="animate-spin h-4 w-4 border-2 border-primary border-t-transparent rounded-full"></div>
-                      <span className="text-sm">Analyzing your concern...</span>
+                      <span className="text-sm">Generating response...</span>
                     </div>
                   </div>
                 </div>
@@ -151,30 +299,45 @@ export default function UserDashboard() {
             </div>
 
             {/* Input Area */}
-            <div className="flex items-center space-x-2">
-              <Button variant="outline" size="sm">
-                <Plus className="h-4 w-4" />
-              </Button>
+            <div className="relative">
+              {file && (
+                <div className="absolute bottom-full left-0 mb-2 w-full">
+                  <div className="p-2 bg-muted rounded-md flex items-center justify-between text-sm">
+                    <div className="flex items-center gap-2 truncate">
+                      <Paperclip className="h-4 w-4 flex-shrink-0" />
+                      <span className="truncate">{file.name}</span>
+                    </div>
+                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setFile(null)}>
+                      <X className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-center space-x-2">
               <div className="flex-1 relative">
                 <Input
                   placeholder="Describe your cybersecurity issue..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
                   onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
-                  className="pr-20"
+                  className="pr-10"
                 />
-                <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center space-x-1">
-                  <Button variant="ghost" size="sm">
-                    <Paperclip className="h-4 w-4" />
-                  </Button>
-                  <Button variant="ghost" size="sm">
-                    <Mic className="h-4 w-4" />
-                  </Button>
-                </div>
               </div>
-              <Button onClick={handleSendMessage} disabled={!message.trim() || isLoading}>
+              <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
+              <Button variant="outline" size="icon" onClick={triggerFileSelect}>
+                <Paperclip className="h-4 w-4" />
+              </Button>
+              <Button variant="outline" size="icon" onClick={handleVoiceInput} className={isRecording ? "bg-red-500/20 text-red-500" : ""}>
+                {isRecording ? (
+                  <div className="h-2 w-2 bg-red-500 rounded-full animate-pulse"></div>
+                ) : (
+                  <Mic className="h-4 w-4" />
+                )}
+              </Button>
+              <Button onClick={handleSendMessage} disabled={(!message.trim() && !file) || isAiTyping}>
                 <Send className="h-4 w-4" />
               </Button>
+            </div>
             </div>
           </CardContent>
         </Card>
@@ -187,31 +350,26 @@ export default function UserDashboard() {
           </CardHeader>
           <CardContent>
             <div className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <FileText className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Phishing Email Report</p>
-                    <p className="text-sm text-muted-foreground">Submitted 2 hours ago</p>
+              {recentIncidents.length > 0 ? (
+                recentIncidents.map((incident) => (
+                  <div key={incident.id} className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
+                    <div className="flex items-center space-x-3">
+                      <FileText className="h-5 w-5 text-primary" />
+                      <div>
+                        <p className="font-medium">{incident.title}</p>
+                        <p className="text-sm text-muted-foreground">
+                          Submitted {new Date(incident.created_at).toLocaleString()}
+                        </p>
+                      </div>
+                    </div>
+                    <Badge variant={getStatusBadgeVariant(incident.status) as any}>
+                      {incident.status}
+                    </Badge>
                   </div>
-                </div>
-                <Badge variant="outline" className="text-yellow-600 border-yellow-600">
-                  In Progress
-                </Badge>
-              </div>
-
-              <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg">
-                <div className="flex items-center space-x-3">
-                  <BookOpen className="h-5 w-5 text-primary" />
-                  <div>
-                    <p className="font-medium">Security Training Completed</p>
-                    <p className="text-sm text-muted-foreground">Yesterday</p>
-                  </div>
-                </div>
-                <Badge variant="outline" className="text-green-600 border-green-600">
-                  Completed
-                </Badge>
-              </div>
+                ))
+              ) : (
+                <p className="text-sm text-muted-foreground text-center py-4">No recent activity found.</p>
+              )}
             </div>
           </CardContent>
         </Card>

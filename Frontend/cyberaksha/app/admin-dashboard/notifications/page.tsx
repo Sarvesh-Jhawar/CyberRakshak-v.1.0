@@ -1,122 +1,104 @@
 "use client"
 
+import { useRouter } from "next/navigation"
+import { useEffect, useState } from "react"
 import { AdminLayout } from "@/components/dashboard/admin-layout"
+import { api, getAuthHeaders } from "@/lib/api"
 import { Card, CardContent } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { AlertTriangle, Bell, CheckCircle, Clock, User, MessageSquare, Shield, Eye } from "lucide-react"
-import { useState } from "react"
 
-const notifications = [
-  {
-    id: "1",
-    type: "critical",
-    title: "Critical Malware Detection",
-    message: "Multiple workstations in IT Division infected with ransomware variant",
-    user: "John Doe",
-    unit: "IT Division",
-    timestamp: "2 minutes ago",
-    read: false,
-    incidentId: "INC-2024-001",
-  },
-  {
-    id: "2",
-    type: "high",
-    title: "Phishing Campaign Alert",
-    message: "15+ employees reported suspicious emails with credential harvesting attempts",
-    user: "Sarah Smith",
-    unit: "HR Department",
-    timestamp: "15 minutes ago",
-    read: false,
-    incidentId: "INC-2024-002",
-  },
-  {
-    id: "3",
-    type: "medium",
-    title: "Suspicious Network Activity",
-    message: "Unusual outbound traffic detected from Finance department workstations",
-    user: "Mike Johnson",
-    unit: "Finance",
-    timestamp: "1 hour ago",
-    read: true,
-    incidentId: "INC-2024-003",
-  },
-  {
-    id: "4",
-    type: "info",
-    title: "Security Training Completion",
-    message: "Monthly cybersecurity training completed by 95% of staff",
-    user: "System",
-    unit: "HR Department",
-    timestamp: "2 hours ago",
-    read: true,
-    incidentId: null,
-  },
-  {
-    id: "5",
-    type: "critical",
-    title: "Data Exfiltration Attempt",
-    message: "Large file transfer to external server blocked by DLP system",
-    user: "Lisa Chen",
-    unit: "R&D",
-    timestamp: "3 hours ago",
-    read: false,
-    incidentId: "INC-2024-004",
-  },
-  {
-    id: "6",
-    type: "high",
-    title: "Failed Login Attempts",
-    message: "Multiple failed admin login attempts from foreign IP addresses",
-    user: "David Wilson",
-    unit: "IT Division",
-    timestamp: "4 hours ago",
-    read: true,
-    incidentId: "INC-2024-005",
-  },
-  {
-    id: "7",
-    type: "medium",
-    title: "Policy Violation",
-    message: "Unauthorized software installation detected on Operations workstation",
-    user: "Emma Brown",
-    unit: "Operations",
-    timestamp: "6 hours ago",
-    read: true,
-    incidentId: "INC-2024-006",
-  },
-  {
-    id: "8",
-    type: "info",
-    title: "System Update Complete",
-    message: "Security patches successfully deployed to all endpoints",
-    user: "System",
-    unit: "IT Division",
-    timestamp: "8 hours ago",
-    read: true,
-    incidentId: null,
-  },
-]
+type Notification = {
+  id: string
+  type: string
+  title: string
+  message: string
+  user: string
+  unit: string
+  timestamp: string
+  read: boolean
+  incidentId: string | null
+}
 
 export default function NotificationsPage() {
   const [filter, setFilter] = useState("all")
-  const [notificationList, setNotificationList] = useState(notifications)
+  const [notificationList, setNotificationList] = useState<Notification[]>([])
+  const [loading, setLoading] = useState(true)
+  const router = useRouter()
 
-  const filteredNotifications = notificationList.filter((notification) => {
+  // Fetch notifications from API
+  useEffect(() => {
+    const fetchNotifications = async () => {
+      try {
+        const headers = getAuthHeaders()
+        const res = await fetch(api.notifications.list, { headers })
+        if (!res.ok) throw new Error("Failed to fetch notifications")
+        const data = await res.json()
+        setNotificationList(
+          Array.isArray(data)
+            ? data.map((n: any) => ({
+                ...n, // Spread the original properties first
+                id: n.id, // Ensure 'id' is correctly mapped from the source
+                type: n.type,
+                title: n.title,
+                message: n.message,
+                read: n.is_read,
+                timestamp: n.created_at,
+              }))
+            : []
+        )
+      } catch (err) {
+        console.error("Error fetching notifications:", err)
+        setNotificationList([]) // Set empty array on error
+      } finally {
+        setLoading(false)
+      }
+    }
+    fetchNotifications()
+  }, [])
+
+  const filteredNotifications = (notificationList || []).filter((notification) => {
     if (filter === "unread") return !notification.read
     if (filter === "critical") return notification.type === "critical"
     if (filter === "high") return notification.type === "high"
     return true
   })
 
-  const markAsRead = (id: string) => {
-    setNotificationList((prev) =>
-      prev.map((notification) => (notification.id === id ? { ...notification, read: true } : notification)),
-    )
+  const markAsRead = async (id: string) => {
+    try {
+      const response = await fetch(api.notifications.markRead(id), {
+        method: "PUT",
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to mark as read");
+      }
+      setNotificationList((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, read: true } : n))
+      );
+    } catch (err) {
+      console.error("Failed to mark notification as read:", err)
+    }
   }
 
-  const markAllAsRead = () => {
-    setNotificationList((prev) => prev.map((notification) => ({ ...notification, read: true })))
+  const markAllAsRead = async () => {
+    try {
+      const response = await fetch(api.notifications.markAllRead, {
+        method: "PUT",
+        headers: getAuthHeaders(),
+      })
+      if (!response.ok) {
+        throw new Error("Failed to mark all as read");
+      }
+      setNotificationList((prev) => prev.map((notification) => ({ ...notification, read: true })))
+    } catch (err) {
+      console.error("Failed to mark all notifications as read:", err)
+    }
+  }
+
+  const handleViewIncident = (incidentId: string | null) => {
+    if (incidentId) router.push(`/admin-dashboard/incidents?incident_id=${incidentId}`)
   }
 
   const getNotificationIcon = (type: string) => {
@@ -145,7 +127,20 @@ export default function NotificationsPage() {
     }
   }
 
-  const unreadCount = notificationList.filter((n) => !n.read).length
+  const unreadCount = (notificationList || []).filter((n) => !n.read).length
+
+  if (loading) {
+    return (
+      <AdminLayout>
+        <div className="flex items-center justify-center py-8">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary mx-auto mb-4"></div>
+            <p className="text-muted-foreground">Loading notifications...</p>
+          </div>
+        </div>
+      </AdminLayout>
+    )
+  }
 
   return (
     <AdminLayout>
@@ -154,7 +149,9 @@ export default function NotificationsPage() {
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-foreground">Notifications</h1>
-            <p className="text-muted-foreground mt-2">Real-time alerts and updates from users ({unreadCount} unread)</p>
+            <p className="text-muted-foreground mt-2">
+              Real-time alerts and updates from users ({unreadCount} unread)
+            </p>
           </div>
           <Button onClick={markAllAsRead} variant="outline">
             Mark All as Read
@@ -166,17 +163,17 @@ export default function NotificationsPage() {
           <CardContent className="p-6">
             <div className="flex flex-wrap gap-2">
               {[
-                { key: "all", label: "All Notifications", count: notificationList.length },
+                { key: "all", label: "All Notifications", count: (notificationList || []).length },
                 { key: "unread", label: "Unread", count: unreadCount },
                 {
                   key: "critical",
                   label: "Critical",
-                  count: notificationList.filter((n) => n.type === "critical").length,
+                  count: (notificationList || []).filter((n) => n.type === "critical").length,
                 },
                 {
                   key: "high",
                   label: "High Priority",
-                  count: notificationList.filter((n) => n.type === "high").length,
+                  count: (notificationList || []).filter((n) => n.type === "high").length,
                 },
               ].map((tab) => (
                 <Button
@@ -216,7 +213,9 @@ export default function NotificationsPage() {
                       <div className="flex items-center space-x-2">
                         <h3 className="font-medium text-foreground">{notification.title}</h3>
                         {getNotificationBadge(notification.type)}
-                        {!notification.read && <div className="h-2 w-2 bg-primary rounded-full animate-pulse" />}
+                        {!notification.read && (
+                          <div className="h-2 w-2 bg-primary rounded-full animate-pulse" />
+                        )}
                       </div>
                       <div className="flex items-center space-x-2 text-sm text-muted-foreground">
                         <Clock className="h-4 w-4" />
@@ -246,7 +245,7 @@ export default function NotificationsPage() {
 
                       <div className="flex items-center space-x-2">
                         {notification.incidentId && (
-                          <Button size="sm" variant="outline">
+                          <Button size="sm" variant="outline" onClick={() => handleViewIncident(notification.incidentId)}>
                             <Eye className="h-4 w-4 mr-2" />
                             View Incident
                           </Button>
@@ -271,7 +270,9 @@ export default function NotificationsPage() {
               <Bell className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
               <h3 className="text-lg font-medium text-foreground mb-2">No notifications found</h3>
               <p className="text-muted-foreground">
-                {filter === "unread" ? "All notifications have been read" : "No notifications match the current filter"}
+                {filter === "unread"
+                  ? "All notifications have been read"
+                  : "No notifications match the current filter"}
               </p>
             </CardContent>
           </Card>

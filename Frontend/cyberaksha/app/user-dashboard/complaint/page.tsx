@@ -15,15 +15,17 @@ import { useRouter } from "next/navigation"
 
 export default function ComplaintPage() {
   const [formData, setFormData] = useState({
+    title: "",
     category: "",
     description: "",
     evidenceType: "",
     evidenceText: "",
     evidenceUrl: "",
   })
-  const [files, setFiles] = useState<File[]>([])
+  const [file, setFile] = useState<File | null>(null)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [showSuccess, setShowSuccess] = useState(false)
+  const [submittedIncidentId, setSubmittedIncidentId] = useState<string>("")
   const router = useRouter()
 
   const categories = [
@@ -58,17 +60,46 @@ export default function ComplaintPage() {
   }
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setFiles(Array.from(e.target.files))
+    if (e.target.files && e.target.files.length > 0) {
+      setFile(e.target.files[0])
     }
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setIsSubmitting(true)
+  
+    try {
+      // Use FormData for file uploads
+      const submissionData = new FormData()
+      submissionData.append("title", formData.title)
+      submissionData.append("category", formData.category)
+      submissionData.append("description", formData.description)
+      if (formData.evidenceType) submissionData.append("evidence_type", formData.evidenceType)
+      if (formData.evidenceText) submissionData.append("evidence_text", formData.evidenceText)
+      if (formData.evidenceUrl) submissionData.append("evidence_url", formData.evidenceUrl)
+      if (file) {
+        submissionData.append("evidence", file)
+      }
 
-    // Simulate form submission
-    setTimeout(() => {
+      // Submit to backend
+      const response = await fetch("http://127.0.0.1:8000/api/v1/incidents", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${localStorage.getItem("token")}`
+        },
+        body: submissionData
+      })
+
+      if (!response.ok) {
+        throw new Error("Failed to submit incident")
+      }
+
+      const result = await response.json()
+      console.log("Incident submitted successfully:", result)
+
+      // Store the incident ID for display
+      setSubmittedIncidentId(result.data?.incident_id || "Unknown")
       setIsSubmitting(false)
       setShowSuccess(true)
 
@@ -77,7 +108,12 @@ export default function ComplaintPage() {
         setShowSuccess(false)
         router.push("/user-dashboard/status")
       }, 3000)
-    }, 2000)
+
+    } catch (error) {
+      console.error("Error submitting incident:", error)
+      alert("Failed to submit incident. Please try again.")
+      setIsSubmitting(false)
+    }
   }
 
   if (showSuccess) {
@@ -94,7 +130,7 @@ export default function ComplaintPage() {
                   complaint status.
                 </p>
                 <div className="text-sm text-primary">
-                  Complaint ID: <span className="font-mono">INC-{Date.now().toString().slice(-6)}</span>
+                  Complaint ID: <span className="font-mono">{submittedIncidentId}</span>
                 </div>
               </div>
             </CardContent>
@@ -126,6 +162,19 @@ export default function ComplaintPage() {
           </CardHeader>
           <CardContent>
             <form onSubmit={handleSubmit} className="space-y-6">
+              {/* Title */}
+              <div className="space-y-2">
+                <Label htmlFor="title">Incident Title *</Label>
+                <Input
+                  id="title"
+                  name="title"
+                  placeholder="e.g., Suspicious Email from External Source"
+                  value={formData.title}
+                  onChange={handleInputChange}
+                  required
+                />
+              </div>
+
               {/* Category Selection */}
               <div className="space-y-2">
                 <Label htmlFor="category">Incident Category *</Label>
@@ -217,7 +266,6 @@ export default function ComplaintPage() {
                         <Input
                           id="fileUpload"
                           type="file"
-                          multiple
                           onChange={handleFileChange}
                           className="hidden"
                           accept={
@@ -237,17 +285,15 @@ export default function ComplaintPage() {
                           {formData.evidenceType === "file" && "Any file type up to 50MB"}
                         </p>
                       </div>
-                      {files.length > 0 && (
+                      {file && (
                         <div className="mt-4">
-                          <p className="text-sm font-medium mb-2">Selected files:</p>
+                          <p className="text-sm font-medium mb-2">Selected file:</p>
                           <ul className="text-sm text-muted-foreground space-y-1">
-                            {files.map((file, index) => (
-                              <li key={index} className="flex items-center space-x-2">
-                                <FileText className="h-4 w-4" />
-                                <span>{file.name}</span>
-                                <span className="text-xs">({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
-                              </li>
-                            ))}
+                            <li className="flex items-center space-x-2">
+                              <FileText className="h-4 w-4" />
+                              <span>{file.name}</span>
+                              <span className="text-xs">({(file.size / 1024 / 1024).toFixed(2)} MB)</span>
+                            </li>
                           </ul>
                         </div>
                       )}

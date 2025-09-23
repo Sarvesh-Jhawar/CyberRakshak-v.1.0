@@ -1,6 +1,7 @@
 "use client"
 
 import { AdminLayout } from "@/components/dashboard/admin-layout"
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription, DialogFooter, DialogClose } from "@/components/ui/dialog"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -22,7 +23,22 @@ import {
   Settings,
   Camera,
 } from "lucide-react"
-import { useState, useEffect } from "react"
+import { useState, useEffect, FormEvent } from "react"
+import { toast } from "sonner"
+import { api, getAuthHeaders } from "@/lib/api"
+
+interface AdminStats {
+  total_incidents: number;
+  total_users: number;
+  resolution_rate: number;
+  avg_response_time?: string; // This might not be in the stats endpoint, so optional
+}
+
+interface RecentActivity {
+  id: string;
+  action: string;
+  timestamp: string;
+}
 
 export default function AdminProfilePage() {
   const [user, setUser] = useState<any>(null)
@@ -32,50 +48,132 @@ export default function AdminProfilePage() {
     email: "",
     phone: "",
     department: "",
-    location: "",
+  })
+  const [stats, setStats] = useState<AdminStats | null>(null)
+  const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([])
+  const [isPasswordDialogOpen, setIsPasswordDialogOpen] = useState(false)
+  const [passwordData, setPasswordData] = useState({
+    current_password: "",
+    new_password: "",
+    confirm_password: "",
   })
 
   useEffect(() => {
-    const userData = localStorage.getItem("user")
-    if (userData) {
-      const parsedUser = JSON.parse(userData)
-      setUser(parsedUser)
-      setFormData({
-        name: parsedUser.name || "",
-        email: parsedUser.email || "",
-        phone: parsedUser.phone || "",
-        department: parsedUser.department || "",
-        location: parsedUser.location || "",
-      })
+    const fetchProfile = async () => {
+      try {
+        const headers = getAuthHeaders()
+        const response = await fetch(api.admin.profile, { headers })
+        if (!response.ok) {
+          throw new Error("Failed to fetch admin profile.")
+        }
+        const data = await response.json()
+        setUser(data)
+        setFormData({
+          name: data.name || "",
+          email: data.email || "",
+          phone: data.phone || "",
+          department: data.department || "",
+        })
+      } catch (error: any) {
+        toast.error("Error", { description: error.message })
+      }
     }
+
+    const fetchStatsAndActivity = async () => {
+      try {
+        const headers = getAuthHeaders()
+        const [statsRes, activityRes] = await Promise.all([
+          fetch(api.admin.dashboardStats, { headers }),
+          fetch(api.admin.actions, { headers }),
+        ])
+
+        if (!statsRes.ok) throw new Error("Failed to fetch admin stats.")
+        if (!activityRes.ok) throw new Error("Failed to fetch recent activity.")
+
+        const statsData = await statsRes.json()
+        const activityData = await activityRes.json()
+
+        setStats(statsData)
+        setRecentActivity(activityData)
+      } catch (error: any) {
+        toast.error("Error loading page data", { description: error.message })
+      }
+    }
+
+    fetchProfile()
+    fetchStatsAndActivity()
   }, [])
 
-  const handleSave = () => {
-    const updatedUser = { ...user, ...formData }
-    localStorage.setItem("user", JSON.stringify(updatedUser))
-    setUser(updatedUser)
-    setIsEditing(false)
-    alert("Profile updated successfully!")
+  const handleSave = async (e: FormEvent) => {
+    e.preventDefault()
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(api.admin.profile, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify(formData),
+      })
+      if (!response.ok) throw new Error("Failed to update profile.")
+      const updatedUser = await response.json()
+      setUser(updatedUser.data)
+      setIsEditing(false)
+      toast.success("Profile updated successfully!")
+    } catch (error: any) {
+      toast.error("Update Failed", { description: error.message })
+    }
   }
 
   const handleInputChange = (field: string, value: string) => {
     setFormData((prev) => ({ ...prev, [field]: value }))
   }
 
+  const handlePasswordInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setPasswordData((prev) => ({ ...prev, [e.target.name]: e.target.value }))
+  }
+
+  const handleChangePassword = async (e: FormEvent) => {
+    e.preventDefault()
+    if (passwordData.new_password !== passwordData.confirm_password) {
+      toast.error("Passwords do not match.")
+      return
+    }
+    if (passwordData.new_password.length < 8) {
+      toast.error("New password must be at least 8 characters long.")
+      return
+    }
+
+    try {
+      const headers = getAuthHeaders()
+      const response = await fetch(api.admin.changePassword, {
+        method: "PUT",
+        headers,
+        body: JSON.stringify({
+          current_password: passwordData.current_password,
+          new_password: passwordData.new_password,
+        }),
+      })
+      if (!response.ok) throw new Error("Failed to change password. Check your current password.")
+      toast.success("Password changed successfully!")
+      setIsPasswordDialogOpen(false)
+    } catch (error: any) {
+      toast.error("Update Failed", { description: error.message })
+    } finally {
+      // Clear password fields for security after the attempt
+      setPasswordData({
+        current_password: "",
+        new_password: "",
+        confirm_password: "",
+      })
+    }
+  }
+
   if (!user) return null
 
   const adminStats = [
-    { label: "Incidents Managed", value: "156", icon: Shield },
-    { label: "Users Supervised", value: "1,247", icon: User },
-    { label: "System Uptime", value: "99.9%", icon: Monitor },
-    { label: "Avg Response Time", value: "2.1h", icon: Clock },
-  ]
-
-  const recentActivity = [
-    { action: "Resolved critical malware incident", time: "2 hours ago", type: "incident" },
-    { action: "Updated security policies", time: "1 day ago", type: "policy" },
-    { action: "Conducted security training", time: "3 days ago", type: "training" },
-    { action: "System maintenance completed", time: "1 week ago", type: "maintenance" },
+    { label: "Incidents Managed", value: stats?.total_incidents ?? 'N/A', icon: Shield },
+    { label: "Users Supervised", value: stats?.total_users ?? 'N/A', icon: User },
+    { label: "Resolution Rate", value: stats ? `${stats.resolution_rate}%` : 'N/A', icon: Monitor },
+    { label: "Avg Response Time", value: stats?.avg_response_time ?? "N/A", icon: Clock },
   ]
 
   return (
@@ -100,7 +198,7 @@ export default function AdminProfilePage() {
                   </div>
                   <Button
                     variant={isEditing ? "default" : "outline"}
-                    onClick={() => (isEditing ? handleSave() : setIsEditing(true))}
+                    onClick={(e) => (isEditing ? handleSave(e) : setIsEditing(true))}
                   >
                     {isEditing ? "Save Changes" : "Edit Profile"}
                   </Button>
@@ -205,20 +303,6 @@ export default function AdminProfilePage() {
                     </div>
                   </div>
 
-                  <div className="space-y-2 md:col-span-2">
-                    <Label htmlFor="location">Location</Label>
-                    <div className="relative">
-                      <MapPin className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        id="location"
-                        value={formData.location}
-                        onChange={(e) => handleInputChange("location", e.target.value)}
-                        disabled={!isEditing}
-                        className="pl-10"
-                        placeholder="New Delhi, India"
-                      />
-                    </div>
-                  </div>
                 </div>
               </CardContent>
             </Card>
@@ -238,7 +322,7 @@ export default function AdminProfilePage() {
                       <p className="text-sm text-muted-foreground">Last changed 30 days ago</p>
                     </div>
                   </div>
-                  <Button variant="outline" size="sm">
+                  <Button variant="outline" size="sm" onClick={() => setIsPasswordDialogOpen(true)}>
                     Change Password
                   </Button>
                 </div>
@@ -307,12 +391,12 @@ export default function AdminProfilePage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {recentActivity.map((activity, index) => (
+                  {recentActivity.slice(0, 4).map((activity, index) => (
                     <div key={index} className="flex items-start space-x-3">
                       <div className="h-2 w-2 bg-primary rounded-full mt-2 flex-shrink-0" />
                       <div>
                         <p className="text-sm font-medium">{activity.action}</p>
-                        <p className="text-xs text-muted-foreground">{activity.time}</p>
+                        <p className="text-xs text-muted-foreground">{new Date(activity.timestamp).toLocaleString()}</p>
                       </div>
                     </div>
                   ))}
@@ -322,6 +406,62 @@ export default function AdminProfilePage() {
           </div>
         </div>
       </div>
+
+      {/* Change Password Dialog */}
+      <Dialog open={isPasswordDialogOpen} onOpenChange={setIsPasswordDialogOpen}>
+        <DialogContent className="sm:max-w-[425px]">
+          <DialogHeader>
+            <DialogTitle>Change Password</DialogTitle>
+            <DialogDescription>
+              Enter your current password and a new password.
+            </DialogDescription>
+          </DialogHeader>
+          <form onSubmit={handleChangePassword}>
+            <div className="grid gap-4 py-4">
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="current_password" className="text-right">
+                  Current
+                </Label>
+                <Input
+                  id="current_password"
+                  name="current_password"
+                  type="password"
+                  className="col-span-3"
+                  value={passwordData.current_password}
+                  onChange={handlePasswordInputChange}
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="new_password" className="text-right">
+                  New
+                </Label>
+                <Input
+                  id="new_password"
+                  name="new_password"
+                  type="password"
+                  className="col-span-3"
+                  value={passwordData.new_password}
+                  onChange={handlePasswordInputChange}
+                  required
+                />
+              </div>
+              <div className="grid grid-cols-4 items-center gap-4">
+                <Label htmlFor="confirm_password" className="text-right">
+                  Confirm
+                </Label>
+                <Input id="confirm_password" name="confirm_password" type="password" className="col-span-3" value={passwordData.confirm_password} onChange={handlePasswordInputChange} required />
+              </div>
+            </div>
+            <DialogFooter>
+              <DialogClose asChild>
+                <Button type="button" variant="secondary">Cancel</Button>
+              </DialogClose>
+              <Button type="submit">Save changes</Button>
+            </DialogFooter>
+          </form>
+        </DialogContent>
+      </Dialog>
     </AdminLayout>
   )
 }

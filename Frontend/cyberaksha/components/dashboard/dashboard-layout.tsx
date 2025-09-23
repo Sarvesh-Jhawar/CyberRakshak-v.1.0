@@ -1,22 +1,78 @@
 "use client"
 
 import type React from "react"
-
-import { useState } from "react"
-import { Shield, FileText, History, BookOpen, HelpCircle, LogOut, User, Menu, X, Monitor } from "lucide-react"
+import { useState, useEffect } from "react"
+import {
+  Shield,
+  FileText,
+  History,
+  BookOpen,
+  HelpCircle,
+  LogOut,
+  User,
+  Menu,
+  X,
+  Monitor,
+} from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar"
 import Link from "next/link"
-import { usePathname } from "next/navigation"
+import { usePathname, useRouter } from "next/navigation"
 import { cn } from "@/lib/utils"
 
 interface DashboardLayoutProps {
   children: React.ReactNode
 }
 
+interface User {
+  name: string
+  role: "admin" | "user"
+  avatar?: string
+}
+
+interface SystemStatus {
+  online: boolean
+}
+
 export function DashboardLayout({ children }: DashboardLayoutProps) {
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const [user, setUser] = useState<User | null>(null)
+  const [systemStatus, setSystemStatus] = useState<SystemStatus | null>(null)
   const pathname = usePathname()
+  const router = useRouter()
+
+  useEffect(() => {
+    // Fetch user info from API
+    const fetchUser = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/v1/auth/me", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        })
+        if (!res.ok) throw new Error("Failed to fetch user info")
+        const data: User = await res.json()
+        setUser(data)
+      } catch (err) {
+        router.push("/login")
+      }
+    }
+
+    // Fetch system status from API
+    const fetchSystemStatus = async () => {
+      try {
+        const res = await fetch("http://127.0.0.1:8000/api/v1/dashboard/status", {
+          headers: { Authorization: `Bearer ${localStorage.getItem("token")}` }
+        })
+        if (!res.ok) throw new Error("Failed to fetch system status")
+        const data: SystemStatus = await res.json()
+        setSystemStatus(data)
+      } catch (err) {
+        setSystemStatus({ online: false })
+      }
+    }
+
+    fetchUser()
+    fetchSystemStatus()
+  }, [router])
 
   const navigation = [
     { name: "Dashboard", href: "/dashboard", icon: Monitor },
@@ -29,6 +85,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   ]
 
   const isActive = (href: string) => pathname === href
+
+  if (!user || !systemStatus) return null
 
   return (
     <div className="min-h-screen bg-background">
@@ -65,6 +123,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <nav className="flex-1 px-4 py-6 space-y-2">
             {navigation.map((item) => {
               const Icon = item.icon
+              if (item.adminOnly && user.role !== "admin") return null
               return (
                 <Link
                   key={item.name}
@@ -93,24 +152,36 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           <div className="p-4 border-t border-sidebar-border">
             <div className="flex items-center space-x-3 mb-4">
               <Avatar className="h-8 w-8">
-                <AvatarImage src="/placeholder.svg?height=32&width=32" />
-                <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground">JD</AvatarFallback>
+                {user.avatar ? (
+                  <AvatarImage src={user.avatar} />
+                ) : (
+                  <AvatarFallback className="bg-sidebar-accent text-sidebar-accent-foreground">
+                    {user.name
+                      ?.split(" ")
+                      .map((n) => n[0])
+                      .join("") || "U"}
+                  </AvatarFallback>
+                )}
               </Avatar>
               <div className="flex-1 min-w-0">
-                <p className="text-sm font-medium text-sidebar-foreground truncate">John Doe</p>
-                <p className="text-xs text-sidebar-foreground/70 truncate">Personnel</p>
+                <p className="text-sm font-medium text-sidebar-foreground truncate">{user.name}</p>
+                <p className="text-xs text-sidebar-foreground/70 truncate">
+                  {user.role === "admin" ? "Administrator" : "Personnel"}
+                </p>
               </div>
             </div>
             <Button
               variant="ghost"
               size="sm"
               className="w-full justify-start text-sidebar-foreground hover:text-destructive hover:bg-destructive/10"
-              asChild
+              onClick={() => {
+                localStorage.removeItem("token")
+                localStorage.removeItem("role")
+                router.push("/login")
+              }}
             >
-              <Link href="/login">
-                <LogOut className="h-4 w-4 mr-2" />
-                Logout
-              </Link>
+              <LogOut className="h-4 w-4 mr-2" />
+              Logout
             </Button>
           </div>
         </div>
@@ -133,8 +204,14 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
             <div className="flex items-center space-x-4">
               <div className="flex items-center space-x-2">
-                <div className="h-2 w-2 bg-primary rounded-full animate-pulse"></div>
-                <span className="text-sm text-muted-foreground">System Online</span>
+                <div
+                  className={`h-2 w-2 rounded-full animate-pulse ${
+                    systemStatus.online ? "bg-primary" : "bg-red-500"
+                  }`}
+                ></div>
+                <span className="text-sm text-muted-foreground">
+                  {systemStatus.online ? "System Online" : "System Offline"}
+                </span>
               </div>
             </div>
           </div>

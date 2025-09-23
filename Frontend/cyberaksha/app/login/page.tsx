@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { Shield, Eye, EyeOff, Mail, Lock } from "lucide-react"
 import { Button } from "@/components/ui/button"
@@ -24,31 +23,32 @@ export default function LoginPage() {
     e.preventDefault()
     setIsLoading(true)
 
-    setTimeout(() => {
-      setIsLoading(false)
-
-      // Mock backend response with role determination
-      const mockBackendResponse = {
-        success: true,
-        user: {
-          id: "123",
-          name: "John Doe",
-          email: formData.email,
-          // Determine role based on email domain or specific credentials
-          role: formData.email.includes("admin") || formData.email.includes("cert") ? "admin" : "user",
-        },
+    try {
+      const res = await fetch("http://127.0.0.1:8000/api/v1/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(formData),
+      })
+      if (!res.ok) {
+        throw new Error("Invalid credentials")
       }
+      const data = await res.json()
+      if (!data.access_token) throw new Error("Login failed")
 
-      // Store user data in localStorage (in real app, use proper session management)
-      localStorage.setItem("user", JSON.stringify(mockBackendResponse.user))
-
-      // Role-based routing
-      if (mockBackendResponse.user.role === "admin") {
+      // Store user + token in localStorage
+      localStorage.setItem("token", data.access_token)
+      localStorage.setItem("role", data.role)
+      // Redirect based on role
+      if (data.role === "ADMIN") {
         router.push("/admin-dashboard")
       } else {
         router.push("/user-dashboard")
       }
-    }, 1500)
+    } catch (err: any) {
+      alert(err.message)
+    } finally {
+      setIsLoading(false)
+    }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -93,9 +93,6 @@ export default function LoginPage() {
                     required
                   />
                 </div>
-                <p className="text-xs text-muted-foreground">
-                  Demo: Use "admin@cert.gov" for admin access or any other email for user access
-                </p>
               </div>
 
               <div className="space-y-2">
