@@ -1,8 +1,7 @@
-"use client"
+'use client'
 
 import type React from "react"
-
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { UserLayout } from "@/components/dashboard/user-layout"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
@@ -11,13 +10,14 @@ import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import { AlertTriangle, Upload, CheckCircle, FileText, ImageIcon, Video, Mic } from "lucide-react"
-import { useRouter } from "next/navigation"
+import { useRouter, useSearchParams } from "next/navigation"
 
 export default function ComplaintPage() {
+  const searchParams = useSearchParams();
   const [formData, setFormData] = useState({
-    title: "",
-    category: "",
-    description: "",
+    title: searchParams.get("title") || "",
+    category: searchParams.get("category") || "",
+    description: searchParams.get("description") || "",
     evidenceType: "",
     evidenceText: "",
     evidenceUrl: "",
@@ -178,7 +178,7 @@ export default function ComplaintPage() {
               {/* Category Selection */}
               <div className="space-y-2">
                 <Label htmlFor="category">Incident Category *</Label>
-                <Select onValueChange={(value) => handleSelectChange("category", value)} required>
+                <Select value={formData.category} onValueChange={(value) => handleSelectChange("category", value)} required>
                   <SelectTrigger>
                     <SelectValue placeholder="Select the type of incident" />
                   </SelectTrigger>

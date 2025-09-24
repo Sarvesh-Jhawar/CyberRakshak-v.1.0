@@ -1,93 +1,71 @@
-// API configuration and utility functions
-const API_ROOT = process.env.NEXT_PUBLIC_API_BASE || "http://127.0.0.1:8000"
-const API_BASE = `${API_ROOT}/api`
-const API_V1_BASE = `${API_BASE}/v1`
+// lib/api.ts
+
+const API_BASE_URL = "http://127.0.0.1:8000"; // Assuming this is the root
 
 export const api = {
-  // Auth endpoints
-  auth: {
-    login: `${API_V1_BASE}/auth/login`,
-    register: `${API_V1_BASE}/auth/register`,
-    logout: `${API_V1_BASE}/auth/logout`,
-    me: `${API_V1_BASE}/auth/me`,
-    refresh: `${API_V1_BASE}/auth/refresh`,
-  },
-  
-  // Incidents endpoints
-  incidents: {
-    list: `${API_V1_BASE}/incidents`,
-    create: `${API_V1_BASE}/incidents`,
-    get: (id: string) => `${API_V1_BASE}/incidents/${id}`,
-    update: (id: string) => `${API_V1_BASE}/incidents/${id}`,
-    delete: (id: string) => `${API_V1_BASE}/incidents/${id}`,
-    stats: `${API_V1_BASE}/incidents/stats/summary`,
-  },
-  
-  // Admin endpoints
-  admin: {
-    summary: `${API_V1_BASE}/admin/summary`,
-    actions: `${API_V1_BASE}/admin/actions`,
-    users: `${API_V1_BASE}/admin/users`,
-    updateUserStatus: (id: string) => `${API_V1_BASE}/admin/users/${id}/status`,
-    exportIncidents: `${API_V1_BASE}/admin/incidents/export`,
-    createBackup: `${API_V1_BASE}/admin/system/backup`,
-    dashboardStats: `${API_V1_BASE}/admin/dashboard/stats`,
-    dashboardAlerts: `${API_V1_BASE}/admin/dashboard/alerts`,
-    incidentsTrends: `${API_V1_BASE}/admin/incidents/trends`,
-    incidentsRisk: `${API_V1_BASE}/admin/incidents/risk`,
-    incidentsPriority: `${API_V1_BASE}/admin/incidents/priority`,
-    incidentsHeatmap: `${API_V1_BASE}/admin/incidents/heatmap`,
-    profile: `${API_V1_BASE}/admin/profile`,
-    bulkNotification: `${API_V1_BASE}/admin/notifications/bulk`,
-    updateProfile: `${API_V1_BASE}/admin/profile`, // Added for PUT
-    changePassword: `${API_V1_BASE}/admin/profile/change-password`,
-    systemAction: `${API_BASE}/system/action`,
-  },
-  
-  // Notifications endpoints
-  notifications: {
-    list: `${API_BASE}/notifications`,
-    markRead: (id: string) => `${API_BASE}/notifications/${id}/read`,
-    delete: (id: string) => `${API_BASE}/notifications/${id}`,
-    markAllRead: `${API_BASE}/notifications/read-all`,
-    count: `${API_BASE}/notifications/count`,
-  },
-  
-  // Reports/Analytics endpoints
-  reports: {
-    monthlyAnalytics: `${API_BASE}/analytics/monthly`,
-    threatTypes: `${API_BASE}/analytics/threat-types`,
-    departmentRisk: `${API_BASE}/analytics/department-risk`,
-    responseTimes: `${API_BASE}/analytics/response-times`,
-    systemStatus: `${API_BASE}/system/status`,
-    dashboardStatus: `${API_BASE}/dashboard/status`,
-    userProfile: `${API_BASE}/user/profile`,
-    userLogout: `${API_BASE}/user/logout`,
-  }
-}
-
-// Helper function to get auth headers
-export const getAuthHeaders = () => {
-  const token = localStorage.getItem("token")
-  return {
-    "Content-Type": "application/json",
-    ...(token && { Authorization: `Bearer ${token}` }),
-  }
-}
-
-// Helper function for API calls
-export const apiCall = async (url: string, options: RequestInit = {}) => {
-  const response = await fetch(url, {
-    ...options,
-    headers: {
-      ...getAuthHeaders(),
-      ...options.headers,
+    incidents: {
+        list: `${API_BASE_URL}/api/v1/incidents/`, // Corrected path
     },
-  })
-  
-  if (!response.ok) {
-    throw new Error(`API call failed: ${response.status} ${response.statusText}`)
+    chat: {
+        sudarshan: `${API_BASE_URL}/api/llm/sudarshan-chakra`,
+    }
+};
+
+export const getAuthHeaders = () => {
+    if (typeof window !== 'undefined') {
+        const token = localStorage.getItem("token");
+        if (token) {
+            return { Authorization: `Bearer ${token}` };
+        }
+    }
+    return {};
+};
+
+interface ChatMessage {
+    role: 'user' | 'assistant';
+    content: string;
+}
+
+/**
+ * Analyzes the given text and optional image using the backend LLM service.
+ *
+ * @param textInput The text to be analyzed.
+ * @param history The conversation history.
+ * @param imageFile An optional image file to be included in the analysis.
+ * @returns A promise that resolves to the JSON analysis from the backend.
+ * @throws An error if the request fails.
+ */
+export async function analyzeWithLlm(textInput: string, history: ChatMessage[], imageFile?: File): Promise<any> {
+  const formData = new FormData();
+  formData.append('text_input', textInput);
+  formData.append('history', JSON.stringify(history));
+
+  if (imageFile) {
+    formData.append('image', imageFile);
   }
-  
-  return response.json()
+
+  try {
+    const authHeaders = getAuthHeaders();
+    const response = await fetch('http://127.0.0.1:8000/api/llm/analyze', {
+      method: 'POST',
+      body: formData,
+      headers: {
+          ...authHeaders
+      }
+    });
+
+    if (!response.ok) {
+      // Special handling for 401 to give a better message
+      if (response.status === 401) {
+          throw new Error('Authentication failed. Please log in again.');
+      }
+      const errorData = await response.json();
+      throw new Error(errorData.detail || 'An unknown error occurred.');
+    }
+
+    return await response.json();
+  } catch (error) {
+    console.error('Error calling analysis API:', error);
+    throw error;
+  }
 }

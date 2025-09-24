@@ -7,6 +7,7 @@ Run this to test basic API functionality
 import requests
 import json
 from typing import Dict, Any
+import time
 
 BASE_URL = "http://localhost:8000"
 API_BASE = f"{BASE_URL}/api/v1"
@@ -44,39 +45,46 @@ def test_root_endpoint():
 def test_user_registration():
     """Test user registration"""
     print("Testing user registration...")
+    # Generate a unique email using the current timestamp to make test idempotent
+    unique_id = int(time.time())
+    email = f"testuser_{unique_id}@defence.mil"
     try:
+
         user_data = {
             "name": "Test User",
-            "service_id": "TEST-12345",
+            "service_id": f"TEST-{unique_id}",
             "relation": "personnel",
-            "email": "test@defence.mil",
+            "email": email,
             "phone": "+1-555-0123",
             "password": "testpassword123"
         }
-        
+
         response = requests.post(
             f"{API_BASE}/auth/register",
             json=user_data,
             headers={"Content-Type": "application/json"}
         )
-        
+
         if response.status_code == 200:
-            print("✅ User registration passed")
-            return True
+            print(f"✅ User registration passed (user: {email})")
+            return email  # Return the unique email for the login test
         else:
             print(f"❌ User registration failed: {response.status_code}")
             print(f"Response: {response.text}")
-            return False
+            return None
     except Exception as e:
         print(f"❌ User registration error: {e}")
-        return False
+        return None
 
-def test_user_login():
+def test_user_login(email: str):
     """Test user login"""
+    if not email:
+        print("⚠️  Skipping login test (registration failed)")
+        return None
     print("Testing user login...")
     try:
         login_data = {
-            "email": "test@defence.mil",
+            "email": email,
             "password": "testpassword123"
         }
         
@@ -198,11 +206,12 @@ def main():
     
     # Test authentication
     total_tests += 1
-    if test_user_registration():
+    registered_email = test_user_registration()
+    if registered_email:
         tests_passed += 1
     
     total_tests += 1
-    token = test_user_login()
+    token = test_user_login(registered_email)
     if token:
         tests_passed += 1
         

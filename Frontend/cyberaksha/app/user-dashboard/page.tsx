@@ -1,4 +1,4 @@
-"use client"
+'use client'
 
 import { useState, useEffect, useRef } from "react"
 import { UserLayout } from "@/components/dashboard/user-layout"
@@ -17,12 +17,14 @@ import {
   Mic,
   Send,
   Paperclip,
-  X,
 } from "lucide-react"
 import Link from "next/link"
-import { api, getAuthHeaders } from "@/lib/api"
+import { api, getAuthHeaders, analyzeWithLlm } from "@/lib/api"
 import { toast } from "sonner"
 import Image from "next/image"
+import { AIResponse } from "@/components/dashboard/AIResponse"
+import ReactMarkdown from "react-markdown"
+import { useRouter } from "next/navigation"
 
 interface Incident {
   id: string;
@@ -32,22 +34,41 @@ interface Incident {
   created_at: string;
 }
 
+interface ChatMessage {
+  id: number;
+  role: 'user' | 'assistant';
+  content: string;
+  analysis?: any;
+  intent?: 'analyze_threat' | 'general_question' | 'request_information' | 'complaint_ready';
+  summary?: any;
+  question?: string;
+  attachment?: string;
+}
+
+// Add this interface to handle the SpeechRecognition API
+interface IWindow extends Window {
+  SpeechRecognition: any;
+  webkitSpeechRecognition: any;
+}
+
 export default function UserDashboard() {
   const [message, setMessage] = useState("")
-  const [file, setFile] = useState<File | null>(null)
-  const fileInputRef = useRef<HTMLInputElement>(null)
   const [isRecording, setIsRecording] = useState(false)
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null)
-  const audioChunksRef = useRef<Blob[]>([])
+  const recognitionRef = useRef<any>(null);
 
-  const [chatMessages, setChatMessages] = useState<
-    Array<{ id: number; type: "user" | "ai"; content: string | React.ReactNode; showComplaintOption?: boolean }>
-  >([])
+  const [chatMessages, setChatMessages] = useState<ChatMessage[]>([])
   const [recentIncidents, setRecentIncidents] = useState<Incident[]>([])
-  const [isLoading, setIsLoading] = useState(false)
   const [isAiTyping, setIsAiTyping] = useState(false)
+  const [isFilingComplaint, setIsFilingComplaint] = useState(false);
+  const [complaintData, setComplaintData] = useState(null);
+  const [attachment, setAttachment] = useState<File | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analysisResult, setAnalysisResult] = useState<any>(null);
+
 
   const chatContainerRef = useRef<HTMLDivElement>(null)
+  const router = useRouter();
+
 
   const getStatusBadgeVariant = (status: string) => {
     switch (status?.toLowerCase()) {
@@ -62,6 +83,21 @@ export default function UserDashboard() {
     }
   }
 
+  // Load chat history from localStorage on initial render
+  useEffect(() => {
+    const savedChat = localStorage.getItem('chatHistory');
+    if (savedChat) {
+      setChatMessages(JSON.parse(savedChat));
+    }
+  }, []);
+
+  // Save chat history to localStorage whenever it changes
+  useEffect(() => {
+    if (chatMessages.length > 0) {
+      localStorage.setItem('chatHistory', JSON.stringify(chatMessages));
+    }
+  }, [chatMessages]);
+
   useEffect(() => {
     // Scroll to the bottom of the chat container when new messages are added
     if (chatContainerRef.current) {
@@ -69,144 +105,108 @@ export default function UserDashboard() {
     }
   }, [chatMessages, isAiTyping])
 
-  const handleSendMessage = async () => {
-    if (!message.trim() && !file) return
-
-    let userMessageContent: React.ReactNode = message
-    if (file) {
-      userMessageContent = (
-        <>
-          {message}
-          <div className="mt-2 text-xs flex items-center gap-2 p-2 bg-black/20 rounded-md">
-            <Paperclip className="h-3 w-3" /> {file.name}
-          </div>
-        </>
-      )
+  useEffect(() => {
+    if (attachment) {
+      handleSendMessage("", attachment);
     }
+  }, [attachment]);
 
-    const userMessage = { id: Date.now(), type: "user" as const, content: userMessageContent }
-    setChatMessages((prev) => [...prev, userMessage])
-    setMessage("")
-    setFile(null)
-    setIsAiTyping(true)
+  const handleSendMessage = async (messageContent?: string, attachment?: File) => {
+    const textToSend = messageContent || message;
+    if (!textToSend.trim() && !attachment) return;
+
+    const newUserMessage: ChatMessage = {
+      id: Date.now(),
+      role: "user",
+      content: textToSend,
+      attachment: attachment ? URL.createObjectURL(attachment) : undefined,
+    };
+    const updatedChatMessages = [...chatMessages, newUserMessage];
+    setChatMessages(updatedChatMessages);
+
+    setMessage("");
+    setAttachment(null);
+    setIsAiTyping(true);
 
     try {
-      const headers = {
-        ...getAuthHeaders(),
-        'Content-Type': 'application/json'
-      }
-      
-      const response = await fetch(api.chat.sudarshan, {
-        method: "POST",
-        headers,
-        body: JSON.stringify({ message }),
+      const history: { role: 'user' | 'assistant'; content: string }[] = updatedChatMessages.slice(0, -1).map(msg => {
+        if (msg.role === 'assistant') {
+          const assistantResponse = {
+            intent: msg.intent,
+            analysis: msg.analysis,
+            answer: msg.content,
+            summary: msg.summary,
+            question: msg.question,
+          };
+          return { role: 'assistant', content: JSON.stringify(assistantResponse) };
+        }
+        return { role: 'user', content: msg.content };
       });
 
-      if (!response.ok) {
-        throw new Error("AI assistant is not responding. Please try again later.");
-      }
+      const result = await analyzeWithLlm(textToSend, history, attachment || undefined);
 
-      const aiData = await response.json();
-      
-      // Display both response and recommendation if available
-      const aiResponseContent = (
-        <>
-          <p>{aiData.response}</p>
-          {aiData.recommendation && (
-            <p className="mt-2 text-sm text-primary">
-              Recommendation: {aiData.recommendation}
-            </p>
-          )}
-        </>
-      );
-
-      const aiMessage = {
+      const newAiMessage: ChatMessage = {
         id: Date.now() + 1,
-        type: "ai" as const,
-        content: aiResponseContent,
-        showComplaintOption: !!aiData.recommendation,
+        role: 'assistant',
+        content: result.answer || result.response || result.question || result.message || '',
+        analysis: result.intent === 'complaint_ready' || result.intent === 'analyze_threat' ? {
+          detection_summary: result.detection_summary,
+          user_alert: result.user_alert,
+          playbook: result.playbook,
+          evidence_to_collect: result.evidence_to_collect,
+          severity: result.severity,
+          cert_alert: result.cert_alert,
+          technical_details: result.technical_details,
+          ui_labels: result.ui_labels,
+        } : result.analysis,
+        intent: result.intent,
+        summary: result.summary,
+        question: result.question,
       };
 
-      setChatMessages((prev) => [...prev, aiMessage]);
+      if (result.intent === 'complaint_ready') {
+        setComplaintData(result.summary);
+        setIsFilingComplaint(false);
+      }
+
+      setChatMessages((prev) => [...prev, newAiMessage]);
     } catch (error: any) {
-      console.error("[SUDARSHAN CHAKRA] Error:", error);
-      toast.error("AI Assistant Error", { description: error.message });
-      const errorMessage = {
+      console.error("[Analyze] Error:", error);
+      toast.error("Analysis Error", { description: error.message });
+      const errorMessage: ChatMessage = {
         id: Date.now() + 1,
-        type: "ai" as const,
-        content: "Sorry, I encountered an error and couldn't process your request. Please try again."
+        role: 'assistant',
+        content: "Sorry, I encountered an error and couldn't process your request. Please try again.",
       };
       setChatMessages((prev) => [...prev, errorMessage]);
     } finally {
-      setIsAiTyping(false)
+      setIsAiTyping(false);
     }
+  };
+
+  const startComplaintProcess = () => {
+    setIsFilingComplaint(true);
+    handleSendMessage("ACTION:START_COMPLAINT");
   }
 
-  const handleFileComplaint = () => {
-    // Simulate filing complaint
-    setChatMessages((prev) => [
-      ...prev,
-      {
-        id: Date.now(),
-        type: "ai" as const,
-        content:
-          "✅ Your complaint has been successfully filed! Complaint ID: CYB-2024-" +
-          Math.floor(Math.random() * 10000) +
-          ". You can track its status in the Complaint Status section.",
-      },
-    ])
-  }
+  const handleProceedToComplaint = () => {
+    if (!complaintData) return;
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files.length > 0) {
-      setFile(e.target.files[0])
-      // Optionally, you can show a toast notification
-      toast.info(`File "${e.target.files[0].name}" attached.`)
+    const queryParams = new URLSearchParams(complaintData);
+    router.push(`/user-dashboard/complaint?${queryParams.toString()}`);
+  };
+
+  const handleAttachmentChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (e.target.files && e.target.files[0]) {
+      setAttachment(e.target.files[0]);
     }
-  }
+  };
 
-  const handleVoiceInput = async () => {
-    if (isRecording) {
-      mediaRecorderRef.current?.stop()
-      setIsRecording(false)
-    } else {
-      try {
-        const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-        const mediaRecorder = new MediaRecorder(stream)
-        mediaRecorderRef.current = mediaRecorder
-        audioChunksRef.current = []
-
-        mediaRecorder.ondataavailable = (event) => {
-          audioChunksRef.current.push(event.data)
-        }
-
-        mediaRecorder.onstop = () => {
-          const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" })
-          const audioUrl = URL.createObjectURL(audioBlob)
-          // For now, let's just log it. Later this can be sent to a speech-to-text API.
-          console.log("Recorded audio:", audioUrl, audioBlob)
-          toast.success("Voice input recorded. Processing is not yet implemented.")
-          // Clean up stream tracks
-          stream.getTracks().forEach((track) => track.stop())
-        }
-
-        mediaRecorder.start()
-        setIsRecording(true)
-        toast.info("Recording started... Click again to stop.")
-      } catch (error) {
-        console.error("Error accessing microphone:", error)
-        toast.error("Could not access microphone.", {
-          description: "Please ensure you have a microphone and have granted permission.",
-        })
-      }
-    }
-  }
-
-  const triggerFileSelect = () => {
-    if (fileInputRef.current) {
-      fileInputRef.current.click()
-    }
-  }
+  const handleNewChat = () => {
+    setChatMessages([]);
+    localStorage.removeItem('chatHistory');
+    toast.success("New chat started!");
+  };
 
   useEffect(() => {
     const fetchRecentActivity = async () => {
@@ -240,17 +240,23 @@ export default function UserDashboard() {
         {/* Sudarshan Chakra AI Assistant */}
         <Card className="cyber-border">
           <CardHeader>
-            <div className="flex items-center space-x-3">
-              <Image
-                src="/model logo.png"
-                alt="Model Logo"
-                width={32}
-                height={32}
-              />
-              <div>
-                <CardTitle>Sudarshan Chakra AI Assistant</CardTitle>
-                <CardDescription>Describe your cybersecurity concerns and get instant guidance</CardDescription>
+            <div className="flex items-center justify-between w-full">
+              <div className="flex items-center space-x-3">
+                <Image
+                  src="/model logo.png"
+                  alt="Model Logo"
+                  width={32}
+                  height={32}
+                />
+                <div>
+                  <CardTitle>Sudarshan Chakra AI Assistant</CardTitle>
+                  <CardDescription>Describe your cybersecurity concerns and get instant guidance</CardDescription>
+                </div>
               </div>
+              <Button variant="outline" size="sm" onClick={handleNewChat}>
+                <Plus className="h-4 w-4 mr-2" />
+                New Chat
+              </Button>
             </div>
           </CardHeader>
           <CardContent>
@@ -270,17 +276,46 @@ export default function UserDashboard() {
               )}
 
               {chatMessages.map((msg) => (
-                <div key={msg.id} className={`flex ${msg.type === "user" ? "justify-end" : "justify-start"}`}>
+                <div key={msg.id} className={`flex ${msg.role === "user" ? "justify-end" : "justify-start"}`}>
                   <div
                     className={`max-w-[80%] p-3 rounded-lg ${
-                      msg.type === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
+                      msg.role === "user" ? "bg-primary text-primary-foreground" : "bg-muted text-muted-foreground"
                     }`}
                   >
-                    <div className="text-sm">{msg.content}</div>
-                    {msg.showComplaintOption && (
-                      <Button size="sm" className="mt-2 cyber-glow" onClick={handleFileComplaint}>
+                    <div className="text-sm prose dark:prose-invert">
+                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      {msg.attachment && (
+                        <Image
+                          src={msg.attachment}
+                          alt="Attachment"
+                          width={200}
+                          height={200}
+                          className="mt-2 rounded-lg"
+                        />
+                      )}
+                    </div>
+                    {msg.role === 'assistant' && msg.intent === 'analyze_threat' && (
+                      <Button size="sm" className="mt-2 cyber-glow" onClick={startComplaintProcess}>
                         File Complaint
                       </Button>
+                    )}
+                    {msg.role === 'assistant' && msg.intent === 'complaint_ready' && (
+                      <div className="mt-4 space-y-2">
+                        {msg.analysis && (
+                          <div>
+                            <h4 className="font-bold text-lg mb-2">Threat Analysis Report</h4>
+                            <div className="p-3 bg-muted/50 rounded-lg space-y-1">
+                              <div><strong>Severity:</strong> <Badge variant={msg.analysis.severity?.toLowerCase() === 'high' ? 'destructive' : 'default'}>{msg.analysis.severity}</Badge></div>
+                              <p><strong>Category:</strong> {msg.analysis.ui_labels?.category}</p>
+                              <p><strong>Summary:</strong> {msg.analysis.detection_summary}</p>
+                              <p className="text-amber-400"><strong>Action:</strong> {msg.analysis.user_alert}</p>
+                            </div>
+                          </div>
+                        )}
+                        <Button size="sm" className="mt-2 cyber-glow" onClick={handleProceedToComplaint}>
+                          Review and Submit Complaint
+                        </Button>
+                      </div>
                     )}
                   </div>
                 </div>
@@ -300,41 +335,31 @@ export default function UserDashboard() {
 
             {/* Input Area */}
             <div className="relative">
-              {file && (
-                <div className="absolute bottom-full left-0 mb-2 w-full">
-                  <div className="p-2 bg-muted rounded-md flex items-center justify-between text-sm">
-                    <div className="flex items-center gap-2 truncate">
-                      <Paperclip className="h-4 w-4 flex-shrink-0" />
-                      <span className="truncate">{file.name}</span>
-                    </div>
-                    <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={() => setFile(null)}>
-                      <X className="h-4 w-4" />
-                    </Button>
-                  </div>
-                </div>
-              )}
               <div className="flex items-center space-x-2">
               <div className="flex-1 relative">
                 <Input
                   placeholder="Describe your cybersecurity issue..."
                   value={message}
                   onChange={(e) => setMessage(e.target.value)}
-                  onKeyPress={(e) => e.key === "Enter" && handleSendMessage()}
+                  onKeyPress={(e) => e.key === "Enter" && handleSendMessage(message, attachment)}
                   className="pr-10"
                 />
+                 <div className="absolute inset-y-0 right-0 flex items-center pr-3">
+                  <input
+                    type="file"
+                    id="file-upload"
+                    className="hidden"
+                    onChange={handleAttachmentChange}
+                    accept="image/*"
+                  />
+                  <label htmlFor="file-upload">
+                    <Button variant="outline" size="icon" asChild>
+                      <Paperclip className="h-4 w-4" />
+                    </Button>
+                  </label>
+                </div>
               </div>
-              <input type="file" ref={fileInputRef} onChange={handleFileChange} className="hidden" />
-              <Button variant="outline" size="icon" onClick={triggerFileSelect}>
-                <Paperclip className="h-4 w-4" />
-              </Button>
-              <Button variant="outline" size="icon" onClick={handleVoiceInput} className={isRecording ? "bg-red-500/20 text-red-500" : ""}>
-                {isRecording ? (
-                  <div className="h-2 w-2 bg-red-500 rounded-full animate-pulse"></div>
-                ) : (
-                  <Mic className="h-4 w-4" />
-                )}
-              </Button>
-              <Button onClick={handleSendMessage} disabled={(!message.trim() && !file) || isAiTyping}>
+              <Button onClick={() => handleSendMessage(message, attachment)} disabled={!message.trim() && !attachment || isAiTyping}>
                 <Send className="h-4 w-4" />
               </Button>
             </div>

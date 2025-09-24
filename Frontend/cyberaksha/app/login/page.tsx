@@ -35,7 +35,8 @@ export default function LoginPage() {
       const data = await res.json()
       if (!data.access_token) throw new Error("Login failed")
 
-      // Store user + token in localStorage
+      // Clear previous session and store user + token in localStorage
+      localStorage.clear()
       localStorage.setItem("token", data.access_token)
       localStorage.setItem("role", data.role)
       // Redirect based on role

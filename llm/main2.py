@@ -1,78 +1,41 @@
 import requests
 import json
-import base64
 import os
+from dotenv import load_dotenv
+
+# Load environment variables from the main backend .env file
+# Adjust the path if your script is in a different location relative to the .env file
+dotenv_path = os.path.join(os.path.dirname(__file__), '..', 'Backend', '.env')
+load_dotenv(dotenv_path=dotenv_path)
 
 # -----------------------------
 # Configuration
 # -----------------------------
-DEEPSEEK_API_KEY = "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"
-GEMINI_API_KEY = "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"
+# Use the key from the environment file
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY")
+if not OPENROUTER_API_KEY:
+    # Fallback to the hardcoded key if not in .env
+    OPENROUTER_API_KEY = "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"
 
-DEEPSEEK_URL = "https://openrouter.ai/api/v1/chat/completions"
-GEMINI_URL = "https://openrouter.ai/api/v1/chat/completions"
-
-# -----------------------------
-# Step 0: User input
-# -----------------------------
-text_input = """You are a cyber incident assistant specializing in Phishing and Spear-Phishing threats. 
-Analyze the input and generate structured JSON with detection_summary, user_alert, playbook, evidence_to_collect, severity, cert_alert, technical_details, ui_labels."""
-# Set to None if no image uploaded
-image_path = r"C:\Users\anura\Desktop\ai\image.png"  # or None
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 # -----------------------------
-# Step 1: Convert image to text using Gemini (if image provided)
+# Step 1: User input
 # -----------------------------
-if image_path and os.path.exists(image_path):
-    with open(image_path, "rb") as f:
-        image_bytes = f.read()
-        encoded_image = base64.b64encode(image_bytes).decode()
-
-    gemini_headers = {
-        "Authorization": f"Bearer {GEMINI_API_KEY}",
-        "Content-Type": "application/json"
-    }
-
-    gemini_data = {
-        "model": "google/gemini-2.5-flash-preview-image",
-        "messages": [
-            {
-                "role": "user",
-                "content": f"Describe the content of this image in text:\ndata:image/jpeg;base64,{encoded_image}"
-            }
-        ],
-        "max_tokens": 1024,
-        "temperature": 0
-    }
-
-    try:
-        gemini_response = requests.post(GEMINI_URL, headers=gemini_headers, data=json.dumps(gemini_data), timeout=30)
-        gem_result = gemini_response.json()
-
-        # Safely extract text
-        text_input = None
-        if "choices" in gem_result and len(gem_result["choices"]) > 0:
-            choice = gem_result["choices"][0]
-            text_input = choice.get("message", {}).get("content") or choice.get("content")
-        if not text_input:
-            print("Warning: Gemini response missing 'content', using default text.")
-            text_input = """You are a cyber incident assistant specializing in Phishing and Spear-Phishing threats. 
-Analyze the input and generate structured JSON with detection_summary, user_alert, playbook, evidence_to_collect, severity, cert_alert, technical_details, ui_labels."""
-
-        print("Text extracted from image:\n", text_input)
-
-    except (requests.RequestException, json.JSONDecodeError) as e:
-        print("Gemini request failed or returned invalid JSON:", str(e))
-        print("Using default text input.")
-
-else:
-    print("No image provided, using default text input.")
+text_input = "I received an email from 'noreply@microsft.com' with the subject 'Action Required: Unusual sign-in activity'. It says I need to verify my account by clicking a link. The link looks like http://microsft-security-update.com/login. Is this a phishing attempt?"
+# Image processing is disabled in the backend, so this script will only test text input.
+image_path = None  # r"C:\Users\anura\Desktop\ai\image.png"
 
 # -----------------------------
 # Step 2: Analyze text with DeepSeek
 # -----------------------------
+if image_path and os.path.exists(image_path):
+    print(f"Image found at {image_path}, but image processing is disabled. Analyzing text input only.")
+
+print("Analyzing text with DeepSeek...")
+
 deepseek_headers = {
-    "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+    "Authorization": f"Bearer {OPENROUTER_API_KEY}",
     "Content-Type": "application/json"
 }
 
@@ -94,23 +57,35 @@ INPUT: {text_input}
 """
 
 deepseek_data = {
-    "model": "deepseek/deepseek-v3.1-terminus",
+    "model": "deepseek/deepseek-chat-v3.1:free",
     "messages": [{"role": "user", "content": deepseek_prompt}],
-    "max_tokens": 800
+    "max_tokens": 2048,
+    "response_format": {"type": "json_object"}
 }
 
 try:
-    deepseek_response = requests.post(DEEPSEEK_URL, headers=deepseek_headers, data=json.dumps(deepseek_data), timeout=30)
+    deepseek_response = requests.post(OPENROUTER_URL, headers=deepseek_headers, data=json.dumps(deepseek_data), timeout=30)
+    deepseek_response.raise_for_status()  # Raise an exception for bad status codes
     result = deepseek_response.json()
 
-    deepseek_json = None
+    deepseek_json_str = None
     if "choices" in result and len(result["choices"]) > 0:
         choice = result["choices"][0]
-        deepseek_json = choice.get("message", {}).get("content") or choice.get("content")
+        deepseek_json_str = choice.get("message", {}).get("content")
 
-    if deepseek_json:
-        print("\nDeepSeek JSON Analysis:\n", deepseek_json)
+    if deepseek_json_str:
+        try:
+            # Try to parse and pretty-print the JSON
+            parsed_json = json.loads(deepseek_json_str)
+            print("\nDeepSeek JSON Analysis:\n")
+            print(json.dumps(parsed_json, indent=2))
+        except json.JSONDecodeError:
+            print("\nDeepSeek returned a non-JSON string:\n", deepseek_json_str)
     else:
-        print("DeepSeek response missing 'content'.")
-except (requests.RequestException, json.JSONDecodeError) as e:
-    print("DeepSeek request failed or returned invalid JSON:", str(e))
+        print("DeepSeek response missing 'content'. Full response:")
+        print(result)
+except requests.RequestException as e:
+    print(f"DeepSeek request failed: {e}")
+except json.JSONDecodeError as e:
+    print(f"Failed to decode DeepSeek JSON response: {e}")
+    print("Raw response:", deepseek_response.text)

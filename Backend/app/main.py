@@ -2,9 +2,10 @@ import os
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from datetime import datetime, timezone
 from fastapi.responses import JSONResponse
 from app.config import settings
-from app.routes import auth, incidents, admin, report, notifications
+from app.routes import auth, incidents, admin, report, notifications, llm, chat
 from app.utils.firebase import initialize_firebase
 import uvicorn
 
@@ -28,7 +29,7 @@ app.mount("/media", StaticFiles(directory=media_dir), name="media")
 # Configure CORS
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=settings.BACKEND_CORS_ORIGINS,
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -47,6 +48,8 @@ app.include_router(incidents.router, prefix="/api/v1")
 app.include_router(admin.router, prefix="/api/v1")
 app.include_router(report.router)
 app.include_router(notifications.router, prefix="/api/v1")
+app.include_router(llm.router)
+app.include_router(chat.router, prefix="/api/v1")
 
 # Root endpoint
 @app.get("/")
@@ -65,7 +68,7 @@ async def health_check():
     """Health check endpoint"""
     return {
         "status": "healthy",
-        "timestamp": "2024-01-16T10:30:00Z",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": settings.VERSION
     }
 

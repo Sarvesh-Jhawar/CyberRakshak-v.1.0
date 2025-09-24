@@ -16,7 +16,7 @@ from app.utils.helpers import (
     generate_admin_actions, generate_random_string
 )
 from app.config import settings
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 
 # Redefine AdminAction here to use datetime for proper validation from string
 class AdminAction(BaseModel):
@@ -35,6 +35,22 @@ class AdminProfileUpdate(BaseModel):
 class PasswordChange(BaseModel):
     current_password: str
     new_password: str
+
+def _parse_timestamp(timestamp_str: Optional[Any]) -> Optional[datetime]:
+    """Safely parse a timestamp string into a timezone-aware datetime object."""
+    if not timestamp_str or not isinstance(timestamp_str, str):
+        return None
+    try:
+        # Normalize and parse the timestamp
+        if timestamp_str.endswith('Z'):
+            timestamp_str = timestamp_str.replace('Z', '+00:00')
+        dt = datetime.fromisoformat(timestamp_str)
+        # Make dt timezone-aware if it's not, assuming UTC
+        if dt.tzinfo is None:
+            return dt.replace(tzinfo=timezone.utc)
+        return dt
+    except (ValueError, TypeError):
+        return None
 
 
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -303,71 +319,19 @@ async def create_system_backup(current_user: Dict[str, Any] = Depends(require_ad
 @router.get("/dashboard/stats", response_model=Dict[str, Any])
 async def get_dashboard_stats(current_user: Dict[str, Any] = Depends(require_admin)):
     """Get admin dashboard statistics"""
-    try:
-        # Get incident statistics
-        incidents = db.get_collection("incidents")
-        users = db.get_collection("users")
-        
-        # Calculate stats with fallback to mock data
-        total_incidents = len(incidents)
-        open_incidents = len([i for i in incidents if i.get("status") in ["Pending", "Under Review"]])
-        resolved_incidents = len([i for i in incidents if i.get("status") in ["Resolved", "Closed"]])
-        total_users = len(users)
-        active_users = len([u for u in users if u.get("is_active", True)])
-        
-        # If no data, return mock data for demo
-        if total_incidents == 0 and total_users <= 1:  # Only admin user exists
-            stats = {
-                "total_incidents": 12,
-                "open_incidents": 3,
-                "resolved_incidents": 9,
-                "total_users": total_users,
-                "active_users": 4,
-                "recent_incidents": 2,
-                "resolution_rate": 75.0
-            }
-        
-        # Recent incidents (last 7 days) - with error handling
-        from datetime import datetime, timedelta
-        week_ago = datetime.utcnow() - timedelta(days=7)
-        recent_incidents = 0
-        for i in incidents:
-            if i.get("created_at"):
-                try:
-                    # Handle different datetime formats
-                    created_at = i["created_at"]
-                    if isinstance(created_at, str):
-                        if 'T' in created_at:
-                            # ISO format
-                            if created_at.endswith('Z'):
-                                created_at = created_at.replace('Z', '+00:00')
-                            dt = datetime.fromisoformat(created_at)
-                        else:
-                            # Simple date format
-                            dt = datetime.fromisoformat(created_at)
-                    else:
-                        # Already a datetime object
-                        dt = created_at
-                    
-                    if dt > week_ago:
-                        recent_incidents += 1
-                except Exception:
-                    # Skip incidents with invalid dates
-                    continue
-        
-        stats = {
-            "total_incidents": total_incidents,
-            "open_incidents": open_incidents,
-            "resolved_incidents": resolved_incidents,
-            "total_users": total_users,
-            "active_users": active_users,
-            "recent_incidents": recent_incidents,
-            "resolution_rate": round((resolved_incidents / total_incidents * 100) if total_incidents > 0 else 0, 1)
-        }
-        return stats
-
-    except Exception as e:
-        # On any exception, return mock data to ensure the dashboard remains functional for demo purposes.
+    # Get incident statistics
+    incidents = db.get_collection("incidents")
+    users = db.get_collection("users")
+    
+    # Calculate stats
+    total_incidents = len(incidents)
+    open_incidents = len([i for i in incidents if i.get("status") in ["Pending", "Under Review"]])
+    resolved_incidents = len([i for i in incidents if i.get("status") in ["Resolved", "Closed"]])
+    total_users = len(users)
+    active_users = len([u for u in users if u.get("is_active", True)])
+    
+    # If no data, return mock data for demo purposes
+    if total_incidents == 0 and total_users <= 1:
         return {
             "total_incidents": 12,
             "open_incidents": 3,
@@ -377,6 +341,24 @@ async def get_dashboard_stats(current_user: Dict[str, Any] = Depends(require_adm
             "recent_incidents": 2,
             "resolution_rate": 75.0
         }
+    
+    # Recent incidents (last 7 days)
+    week_ago = datetime.utcnow() - timedelta(days=7)
+    recent_incidents = 0
+    for i in incidents:
+        dt = _parse_timestamp(i.get("created_at"))
+        if dt and dt > week_ago.replace(tzinfo=timezone.utc):
+            recent_incidents += 1
+    
+    return {
+        "total_incidents": total_incidents,
+        "open_incidents": open_incidents,
+        "resolved_incidents": resolved_incidents,
+        "total_users": total_users,
+        "active_users": active_users,
+        "recent_incidents": recent_incidents,
+        "resolution_rate": round((resolved_incidents / total_incidents * 100) if total_incidents > 0 else 0, 1)
+    }
 
 # Dashboard Alerts
 @router.get("/dashboard/alerts", response_model=List[Dict[str, Any]])
@@ -441,23 +423,11 @@ async def get_incident_trends(current_user: Dict[str, Any] = Depends(require_adm
         monthly_data = defaultdict(int)
         
         for incident in incidents:
-            if incident.get("created_at"):
-                try:
-                    created_at = incident["created_at"]
-                    if isinstance(created_at, str):
-                        if 'T' in created_at:
-                            if created_at.endswith('Z'):
-                                created_at = created_at.replace('Z', '+00:00')
-                            date = datetime.fromisoformat(created_at)
-                        else:
-                            date = datetime.fromisoformat(created_at)
-                    else:
-                        date = created_at
-                    
-                    month_key = date.strftime("%Y-%m")
-                    monthly_data[month_key] += 1
-                except:
-                    continue
+            date = _parse_timestamp(incident.get("created_at"))
+            if date:
+                month_key = date.strftime("%Y-%m")
+                monthly_data[month_key] += 1
+
         
         # Convert to list format
         trends = [
